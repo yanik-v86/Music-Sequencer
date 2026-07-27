@@ -610,6 +610,23 @@ input[type="range"]::-webkit-slider-thumb {
   font-weight: 500;
 }
 
+.footer {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--glass-border);
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.footer a {
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color .15s;
+}
+.footer a:hover { color: var(--accent); }
+
 @media (max-width: 640px) {
   body { padding: 12px; }
   .container { padding: 16px; border-radius: 14px; }
