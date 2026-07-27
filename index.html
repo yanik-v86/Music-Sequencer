@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sequencer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:opsz@14..32&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <div class="logo"><span>◆</span>seq<em>uencer</em></div>
+    <div class="controls-row">
+      <label>mood <select id="moodSelect"></select></label>
+      <label>bpm <input type="range" id="bpmSlider" min="40" max="200" value="110"></label>
+      <span id="bpmDisplay" class="status" style="min-width:30px">110</span>
+      <label>vol <input type="range" id="volSlider" min="0" max="100" value="70"></label>
+      <label style="gap:2px">oct <button class="oct-btn" id="octDown">◀</button><span id="octDisplay" class="status" style="min-width:20px;text-align:center">+0</span><button class="oct-btn" id="octUp">▶</button></label>
+    </div>
+  </header>
+
+  <div class="looper-bar" id="looperBar">
+    <span class="looper-label">Pattern</span>
+    <div class="looper-pats" id="looperPats"></div>
+    <div class="looper-actions">
+      <button class="copy-btn" id="copyBtn">Copy →</button>
+      <button class="rec-btn" id="recBtn"><span class="dot"></span> Rec</button>
+    </div>
+  </div>
+
+  <div class="grid-wrap">
+    <div class="grid" id="grid"></div>
+  </div>
+
+  <div class="controls-bottom">
+    <div class="btn-group">
+      <button class="btn primary" id="playBtn">▶ Play</button>
+      <button class="btn" id="stopBtn">■ Stop</button>
+    </div>
+    <div class="btn-group">
+      <button class="btn soft" id="randomBtn">✦ Random</button>
+      <button class="btn soft" id="clearBtn">✕ Clear</button>
+    </div>
+    <div class="btn-group">
+      <button class="btn soft" id="exportBtn">↓ Export</button>
+      <button class="btn soft" id="importBtn">↑ Import</button>
+      <input type="file" id="fileInput" accept=".json" style="display:none">
+    </div>
+    <span class="status" id="statusDisplay">stopped</span>
+    <span class="status" id="stepDisplay" style="min-width:28px"></span>
+    <span class="spacer"></span>
+    <span class="mood-tag" id="moodTag">Warm</span>
+    <span class="hint" id="helpHint">? help</span>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <h2>⌨ Hotkeys</h2>
+    <table>
+      <tr><td>Space</td><td>Play / Pause</td></tr>
+      <tr><td>1 – 9</td><td>Select pattern</td></tr>
+      <tr><td>↑ / ↓</td><td>Octave up / down</td></tr>
+      <tr><td>B</td><td>Toggle Bass section</td></tr>
+      <tr><td>P</td><td>Toggle Percussion section</td></tr>
+      <tr><td>M</td><td>Toggle Melody section</td></tr>
+      <tr><td>R</td><td>Toggle Rec mode</td></tr>
+      <tr><td>C</td><td>Clear pattern</td></tr>
+      <tr><td>S</td><td>Stop</td></tr>
+      <tr><td>? / /</td><td>Show this help</td></tr>
+      <tr><td>Esc</td><td>Close help</td></tr>
+    </table>
+    <button class="close-btn" id="modalClose">Close</button>
+  </div>
+</div>
+
+<div class="context-menu" id="ctxMenu"></div>
+
+<script src="script.js"></script>
+</body>
+</html>
