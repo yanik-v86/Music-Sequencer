@@ -11,97 +11,113 @@
 </head>
 <body>
 
-<div class="container">
-  <header>
-    <div class="logo-group">
-      <div class="logo"><span>◆</span>seq<em>uencer</em></div>
-      <canvas id="visualizer" width="100" height="20"></canvas>
-    </div>
-    <div class="controls-row">
-      <label>mood <select id="moodSelect"></select></label>
-      <label>bpm <input type="range" id="bpmSlider" min="40" max="200" value="110"></label>
-      <span id="bpmDisplay" class="status" style="min-width:30px">110</span>
-      <label>vol <input type="range" id="volSlider" min="0" max="100" value="70"></label>
-      <label style="gap:2px">oct <button class="oct-btn" id="octDown">◀</button><span id="octDisplay" class="status" style="min-width:20px;text-align:center">+0</span><button class="oct-btn" id="octUp">▶</button></label>
-      <span class="ctrl-divider"></span>
-      <button class="btn soft" id="metroToggle">♩</button>
-      <span class="metro-group" id="metroGroup">
-        <input type="range" id="metroVol" min="0" max="100" value="40">
-      </span>
-      <span class="ctrl-divider"></span>
-      <label title="Reverb Amount">rev <input type="range" id="reverbSlider" min="0" max="100" value="25"></label>
-      <label title="Delay Amount">del <input type="range" id="delaySlider" min="0" max="100" value="15"></label>
-    </div>
-  </header>
-
-  <div class="looper-bar" id="looperBar">
-    <span class="looper-label">Pattern</span>
-    <div class="looper-pats" id="looperPats"></div>
-    <label class="quant-label" id="quantLabel">grid <select id="quantSelect">
-      <option value="1">1/16</option>
-      <option value="2">1/8</option>
-      <option value="4">1/4</option>
-      <option value="0">off</option>
-    </select></label>
-    <div class="looper-actions">
-      <button class="copy-btn" id="copyBtn">Copy →</button>
-      <button class="odub-btn" id="odubBtn"><span class="dot"></span> Overdub</button>
-    </div>
-  </div>
-
-  <div class="grid-wrap">
-    <div class="grid" id="grid"></div>
-  </div>
-
-  <div class="controls-bottom">
-    <div class="btn-group">
-      <button class="btn primary" id="playBtn">▶ Play</button>
-      <button class="btn" id="stopBtn">■ Stop</button>
-      <button class="btn rec-btn" id="recBtn">● Rec</button>
-    </div>
-    <div class="btn-group">
-      <button class="btn soft" id="randomBtn">✦ Random</button>
-      <button class="btn soft" id="clearBtn">✕ Clear</button>
-    </div>
-    <div class="btn-group">
-      <button class="btn soft" id="exportBtn">↓ Export</button>
-      <button class="btn soft" id="importBtn">↑ Import</button>
-      <input type="file" id="fileInput" accept=".json" style="display:none">
-    </div>
-    <span class="status" id="statusDisplay">stopped</span>
-    <span class="status" id="stepDisplay" style="min-width:28px"></span>
-    <span class="spacer"></span>
-    <button class="btn soft" id="previewBtn">Preview</button>
-    <span class="mood-tag" id="moodTag">Warm</span>
-    <span class="hint" id="helpHint">? help</span>
-  </div>
-
-  <div class="timeline-wrap" id="timelineWrap" style="display:none">
-    <div class="timeline-header">
-      <span class="timeline-label">Recording</span>
-      <div class="timeline-controls">
-        <label class="tl-res-label" title="Timeline resolution">res <select id="tlResSelect">
-          <option value="steps">steps</option>
-          <option value="seconds">seconds</option>
-        </select></label>
-        <button class="btn soft" id="tlPlayBtn">▶ Play</button>
-        <button class="btn soft" id="tlStopBtn">■ Stop</button>
-        <button class="btn soft" id="tlClearBtn">✕ Clear</button>
-        <button class="btn soft" id="tlExportBtn">↓ Export</button>
-        <button class="btn soft" id="tlImportBtn">↑ Import</button>
-        <input type="file" id="tlFileInput" accept=".json" style="display:none">
-        <span class="status" id="tlStatus" style="font-size:10px">idle</span>
+<div class="app-layout">
+  <aside class="sidebar" id="sidebar">
+    <div class="logo"><span>◆</span>seq<em>uencer</em></div>
+    <canvas id="visualizer" width="100" height="20"></canvas>
+    <div class="sidebar-section">
+      <div class="sidebar-heading">Projects</div>
+      <div class="project-list" id="projectList">
+        <div class="project-item is-active" data-idx="0">
+          <span class="project-icon">♫</span>
+          <span class="project-name">Default</span>
+        </div>
       </div>
     </div>
-    <div class="tl-grid-wrap">
-      <div class="tl-grid" id="tlGrid"></div>
+    <div class="sidebar-actions">
+      <button class="sidebar-btn" id="newProjectBtn">+ New Project</button>
     </div>
-  </div>
+  </aside>
+  <main class="main-content">
+    <div class="container">
+      <header>
+        <div class="controls-row">
+          <label>mood <select id="moodSelect"></select></label>
+          <label>bpm <input type="range" id="bpmSlider" min="40" max="200" value="110"></label>
+          <span id="bpmDisplay" class="status" style="min-width:30px">110</span>
+          <label>vol <input type="range" id="volSlider" min="0" max="100" value="70"></label>
+          <label style="gap:2px">oct <button class="oct-btn" id="octDown">◀</button><span id="octDisplay" class="status" style="min-width:20px;text-align:center">+0</span><button class="oct-btn" id="octUp">▶</button></label>
+          <span class="ctrl-divider"></span>
+          <button class="btn soft" id="metroToggle">♩</button>
+          <span class="metro-group" id="metroGroup">
+            <input type="range" id="metroVol" min="0" max="100" value="40">
+          </span>
+          <span class="ctrl-divider"></span>
+          <label title="Reverb Amount">rev <input type="range" id="reverbSlider" min="0" max="100" value="25"></label>
+          <label title="Delay Amount">del <input type="range" id="delaySlider" min="0" max="100" value="15"></label>
+        </div>
+      </header>
 
-  <footer class="footer">
-    <a href="https://github.com/yanik-v86/Music-Sequencer" target="_blank" rel="noopener">github.com/yanik-v86/Music-Sequencer</a>
-    <span>MIT License</span>
-  </footer>
+      <div class="looper-bar" id="looperBar">
+        <span class="looper-label">Pattern</span>
+        <div class="looper-pats" id="looperPats"></div>
+        <label class="quant-label" id="quantLabel">grid <select id="quantSelect">
+          <option value="1">1/16</option>
+          <option value="2">1/8</option>
+          <option value="4">1/4</option>
+          <option value="0">off</option>
+        </select></label>
+        <div class="looper-actions">
+          <button class="copy-btn" id="copyBtn">Copy →</button>
+          <button class="odub-btn" id="odubBtn"><span class="dot"></span> Overdub</button>
+        </div>
+      </div>
+
+      <div class="grid-wrap">
+        <div class="grid" id="grid"></div>
+      </div>
+
+      <div class="controls-bottom">
+        <div class="btn-group">
+          <button class="btn primary" id="playBtn">▶ Play</button>
+          <button class="btn" id="stopBtn">■ Stop</button>
+          <button class="btn rec-btn" id="recBtn">● Rec</button>
+        </div>
+        <div class="btn-group">
+          <button class="btn soft" id="randomBtn">✦ Random</button>
+          <button class="btn soft" id="clearBtn">✕ Clear</button>
+        </div>
+        <div class="btn-group">
+          <button class="btn soft" id="exportBtn">↓ Export</button>
+          <button class="btn soft" id="importBtn">↑ Import</button>
+          <input type="file" id="fileInput" accept=".json" style="display:none">
+        </div>
+        <span class="status" id="statusDisplay">stopped</span>
+        <span class="status" id="stepDisplay" style="min-width:28px"></span>
+        <span class="spacer"></span>
+        <button class="btn soft" id="previewBtn">Preview</button>
+        <span class="mood-tag" id="moodTag">Warm</span>
+        <span class="hint" id="helpHint">? help</span>
+      </div>
+
+      <div class="timeline-wrap" id="timelineWrap" style="display:none">
+        <div class="timeline-header">
+          <span class="timeline-label">Recording</span>
+          <div class="timeline-controls">
+            <label class="tl-res-label" title="Timeline resolution">res <select id="tlResSelect">
+              <option value="steps">steps</option>
+              <option value="seconds">seconds</option>
+            </select></label>
+            <button class="btn soft" id="tlPlayBtn">▶ Play</button>
+            <button class="btn soft" id="tlStopBtn">■ Stop</button>
+            <button class="btn soft" id="tlClearBtn">✕ Clear</button>
+            <button class="btn soft" id="tlExportBtn">↓ Export</button>
+            <button class="btn soft" id="tlImportBtn">↑ Import</button>
+            <input type="file" id="tlFileInput" accept=".json" style="display:none">
+            <span class="status" id="tlStatus" style="font-size:10px">idle</span>
+          </div>
+        </div>
+        <div class="tl-grid-wrap">
+          <div class="tl-grid" id="tlGrid"></div>
+        </div>
+      </div>
+
+      <footer class="footer">
+        <a href="https://github.com/yanik-v86/Music-Sequencer" target="_blank" rel="noopener">github.com/yanik-v86/Music-Sequencer</a>
+        <span>MIT License</span>
+      </footer>
+    </div>
+  </main>
 </div>
 
 <div class="modal-overlay" id="modalOverlay">

@@ -2429,6 +2429,250 @@ function loadState() {
   } catch(_) { return false; }
 }
 
+// ── Project Management ──────────────────────────────────────────
+const PROJECTS_KEY = 'sequencer-projects';
+let projects = [];
+let currentProjectIdx = 0;
+
+function initProjects() {
+  try {
+    const raw = localStorage.getItem(PROJECTS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) { projects = parsed; return; }
+    }
+  } catch(_) {}
+  projects = [{ name: 'Default' }];
+}
+
+function saveProjectList() {
+  try { localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects)); } catch(_) {}
+}
+
+function renderProjectList() {
+  const list = document.getElementById('projectList');
+  if (!list) return;
+  list.innerHTML = '';
+  projects.forEach((proj, i) => {
+    const el = document.createElement('div');
+    el.className = 'project-item' + (i === currentProjectIdx ? ' is-active' : '');
+    el.innerHTML = '<span class="project-icon">♫</span><span class="project-name">' + esc(proj.name) + '</span>';
+    if (projects.length > 1) {
+      const delBtn = document.createElement('button');
+      delBtn.className = 'project-del';
+      delBtn.innerHTML = '✕';
+      delBtn.title = 'Delete project';
+      delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteProject(i); });
+      el.appendChild(delBtn);
+    }
+    el.addEventListener('click', () => switchToProject(i));
+    list.appendChild(el);
+  });
+}
+
+function deleteProject(idx) {
+  if (projects.length <= 1) return;
+  if (!confirm('Delete project "' + projects[idx].name + '"?')) return;
+  // Remove from localStorage
+  try { localStorage.removeItem('seq-project-' + idx); } catch(_) {}
+  projects.splice(idx, 1);
+  // Re-index remaining projects in localStorage
+  for (let i = idx; i < projects.length; i++) {
+    const key = 'seq-project-' + (i + 1);
+    try {
+      const data = localStorage.getItem(key);
+      if (data) {
+        localStorage.setItem('seq-project-' + i, data);
+        localStorage.removeItem(key);
+      }
+    } catch(_) {}
+  }
+  if (currentProjectIdx >= projects.length) currentProjectIdx = projects.length - 1;
+  else if (currentProjectIdx > idx) currentProjectIdx--;
+  saveProjectList();
+  renderProjectList();
+  loadProjectFromStorage(currentProjectIdx);
+  for (let r = 0; r < TRACK_COUNT; r++)
+    for (let c = 0; c < STEPS; c++)
+      updateCell(r, c);
+  updatePatNoteIndicators();
+  updateVolumeBars();
+  autoSave();
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function saveProjectToStorage(idx) {
+  saveCurrentPattern();
+  const key = 'seq-project-' + idx;
+  const data = {
+    patternBank: patternBank.map(p => p.map(r => r.map(c => c))),
+    patternTrackVolumes: patternTrackVolumes.map(v => Array.from(v)),
+    patternMoods: patternMoods.map(i => MOODS[i].id),
+    patternOctaves: [...patternOctaves],
+    bpm, volume,
+    muted: Array.from(muted),
+    trackVolumes: Array.from(trackVolumes),
+    sectionMuted: {...sectionMuted},
+    octaveShift,
+    trackOverrides: trackOverrides.map(v => v || null),
+    previewEnabled,
+    metronomeEnabled, metronomeVolume,
+    quantizeStepSize,
+    recordedEvents,
+    reverbMix, delayMix,
+  };
+  try { localStorage.setItem(key, JSON.stringify(data)); } catch(_) {}
+}
+
+function loadProjectFromStorage(idx) {
+  try {
+    const raw = localStorage.getItem('seq-project-' + idx);
+    if (!raw) return false;
+    const d = JSON.parse(raw);
+    if (!d.patternBank) return false;
+
+    for (let p = 0; p < Math.min(MAX_PATTERNS, d.patternBank.length); p++) {
+      const src = d.patternBank[p];
+      for (let r = 0; r < Math.min(TRACK_COUNT, src.length); r++)
+        for (let c = 0; c < Math.min(STEPS, src[r].length); c++)
+          patternBank[p][r][c] = !!src[r][c];
+      if (d.patternMoods && d.patternMoods[p]) {
+        const mi = MOODS.findIndex(m => m.id === d.patternMoods[p]);
+        patternMoods[p] = mi >= 0 ? mi : 0;
+      }
+      if (d.patternOctaves && d.patternOctaves[p] != null)
+        patternOctaves[p] = d.patternOctaves[p];
+    }
+
+    if (d.bpm != null) { bpm = d.bpm; bpmSlider.value = bpm; bpmDisplay.textContent = bpm; }
+    if (d.volume != null) { volume = d.volume; volSlider.value = volume * 100; if (masterGain) masterGain.gain.value = volume; }
+    if (d.octaveShift != null) { octaveShift = d.octaveShift; updateOctaveDisplay(); }
+    if (d.muted) for (let r = 0; r < Math.min(TRACK_COUNT, d.muted.length); r++) muted[r] = !!d.muted[r];
+    if (d.sectionMuted) {
+      for (const sec of ['melody','bass','percussion']) {
+        if (d.sectionMuted[sec] != null) {
+          sectionMuted[sec] = d.sectionMuted[sec];
+          const btn = sectionMuteButtons[sec];
+          if (btn) { btn.classList.toggle('is-muted', sectionMuted[sec]); btn.textContent = sectionMuted[sec] ? 'Off' : 'On'; }
+          updateSectionMuteVisual(sec);
+        }
+      }
+    }
+    if (d.trackVolumes) for (let r = 0; r < Math.min(TRACK_COUNT, d.trackVolumes.length); r++) trackVolumes[r] = d.trackVolumes[r];
+    if (d.patternTrackVolumes) {
+      for (let p = 0; p < Math.min(MAX_PATTERNS, d.patternTrackVolumes.length); p++)
+        for (let r = 0; r < Math.min(TRACK_COUNT, d.patternTrackVolumes[p].length); r++)
+          patternTrackVolumes[p][r] = d.patternTrackVolumes[p][r];
+    }
+    if (d.trackOverrides) for (let r = 0; r < Math.min(TRACK_COUNT, d.trackOverrides.length); r++) trackOverrides[r] = d.trackOverrides[r] || null;
+    if (d.previewEnabled != null) previewEnabled = d.previewEnabled;
+    if (d.metronomeEnabled != null) { metronomeEnabled = d.metronomeEnabled; if (!metronomeEnabled) stopMetronome(); }
+    if (d.metronomeVolume != null) metronomeVolume = d.metronomeVolume;
+    if (d.quantizeStepSize != null) { quantizeStepSize = d.quantizeStepSize; if (quantSelect) quantSelect.value = d.quantizeStepSize; }
+    if (d.recordedEvents) recordedEvents = d.recordedEvents;
+    if (d.reverbMix != null) { reverbMix = d.reverbMix; if (reverbSlider) reverbSlider.value = reverbMix * 100; if (reverbGain) reverbGain.gain.setValueAtTime(reverbMix, audioCtx.currentTime); }
+    if (d.delayMix != null) { delayMix = d.delayMix; if (delaySlider) delaySlider.value = delayMix * 100; if (delayGain) delayGain.gain.setValueAtTime(delayMix, audioCtx.currentTime); }
+
+    loadPattern(currentPatternIdx);
+    updatePatNoteIndicators();
+    updateVolumeBars();
+
+    if (recordedEvents && recordedEvents.length) {
+      timelineWrap.style.display = '';
+      buildTimelineGrid();
+    } else {
+      timelineWrap.style.display = 'none';
+    }
+
+    return true;
+  } catch(_) { return false; }
+}
+
+function switchToProject(idx) {
+  if (idx === currentProjectIdx) return;
+  stopPlayback();
+  stopTimelinePlayback();
+  saveProjectToStorage(currentProjectIdx);
+  currentProjectIdx = idx;
+  loadProjectFromStorage(idx);
+  for (let r = 0; r < TRACK_COUNT; r++)
+    for (let c = 0; c < STEPS; c++)
+      updateCell(r, c);
+  updatePatNoteIndicators();
+  updateVolumeBars();
+  renderProjectList();
+  autoSave();
+}
+
+function newProject() {
+  const name = prompt('Project name:');
+  if (!name || !name.trim()) return;
+  stopPlayback();
+  stopTimelinePlayback();
+  saveProjectToStorage(currentProjectIdx);
+  for (let p = 0; p < MAX_PATTERNS; p++)
+    for (let r = 0; r < TRACK_COUNT; r++)
+      for (let c = 0; c < STEPS; c++)
+        patternBank[p][r][c] = false;
+  for (let r = 0; r < TRACK_COUNT; r++)
+    for (let c = 0; c < STEPS; c++)
+      pattern[r][c] = false;
+  for (let r = 0; r < TRACK_COUNT; r++)
+    for (let c = 0; c < STEPS; c++)
+      updateCell(r, c);
+  moodSelect.value = MOODS[0].id;
+  patternMoods[currentPatternIdx] = 0;
+  bpm = 110; bpmSlider.value = 110; bpmDisplay.textContent = '110';
+  volume = 0.7; volSlider.value = 70; if (masterGain) masterGain.gain.value = 0.7;
+  octaveShift = 0; updateOctaveDisplay();
+  for (let r = 0; r < TRACK_COUNT; r++) { muted[r] = false; trackVolumes[r] = 0.7; trackOverrides[r] = null; }
+  sectionMuted = { melody: false, bass: false, percussion: false };
+  for (const sec of ['melody','bass','percussion']) {
+    const btn = sectionMuteButtons[sec];
+    if (btn) { btn.classList.remove('is-muted'); btn.textContent = 'On'; }
+    updateSectionMuteVisual(sec);
+  }
+  recordedEvents = [];
+  timelineWrap.style.display = 'none';
+  previewEnabled = true;
+  metronomeEnabled = true; metronomeVolume = 0.4;
+  quantizeStepSize = '1';
+
+  // Reload pattern 0 into view
+  loadPattern(0);
+  updatePatNoteIndicators();
+  updateVolumeBars();
+
+  const proj = { name: name.trim() };
+  projects.push(proj);
+  currentProjectIdx = projects.length - 1;
+  saveProjectList();
+  renderProjectList();
+  autoSave();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initProjects();
+  const hasData = (function() {
+    try { return !!localStorage.getItem('seq-project-0'); } catch(_) { return false; }
+  })();
+  if (hasData) {
+    // Reload from project 0 (overwrites whatever loadState() loaded from old key)
+    loadProjectFromStorage(0);
+    for (let r = 0; r < TRACK_COUNT; r++)
+      for (let c = 0; c < STEPS; c++)
+        updateCell(r, c);
+  } else {
+    // First run — save current state (from old key or demo) as project 0
+    saveProjectToStorage(0);
+    saveProjectList();
+  }
+  renderProjectList();
+  const newBtn = document.getElementById('newProjectBtn');
+  if (newBtn) newBtn.addEventListener('click', newProject);
+});
+
 autoSave = function() { setTimeout(saveState, 0); };
 
 const origClear = clearBtn.click;
@@ -2438,38 +2682,52 @@ exportBtn.addEventListener('click', autoSave);
 bpmSlider.addEventListener('input', autoSave);
 volSlider.addEventListener('input', autoSave);
 
-if (!loadState()) {
-  const demoSrc = [
-    /* 0 C3   */ [1,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0],
-    /* 1 D3   */ [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
-    /* 2 E3   */ [0,0,1,0, 0,0,0,0, 0,0,0,1, 0,0,1,0],
-    /* 3 F3   */ [0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0],
-    /* 4 G3   */ [0,0,0,1, 0,0,1,0, 0,0,1,0, 0,1,0,0],
-    /* 5 A3   */ [0,0,0,0, 0,1,0,0, 0,0,0,0, 0,0,0,0],
-    /* 6 B3   */ [0,1,0,0, 0,0,0,0, 0,0,0,0, 1,0,0,0],
-    /* 7 C4   */ [0,0,0,0, 1,0,0,1, 0,0,0,0, 0,0,0,1],
-    /* 8 Bass1*/ [1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,0,1],
-    /* 9 Bass2*/ [0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0],
-    /*10 Bass3*/ [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,1,0],
-    /*11 Bass4*/ [0,0,0,1, 0,0,0,0, 0,0,1,0, 0,0,0,0],
-    /*12 Kick */ [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0],
-    /*13 Snare*/ [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
-    /*14 HH Cl*/ [1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1],
-    /*15 HH Op*/ [0,0,0,0, 0,0,0,1, 0,0,0,0, 0,0,0,1],
-    /*16 Clap */ [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
-    /*17 Tom  */ [0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0],
-  ];
-  for (let r = 0; r < Math.min(TRACK_COUNT, demoSrc.length); r++)
-    for (let c = 0; c < STEPS; c++)
-      pattern[r][c] = demoSrc[r][c];
-  for (let r = 0; r < TRACK_COUNT; r++)
-    for (let c = 0; c < STEPS; c++)
-      updateCell(r, c);
-  for (let r = 0; r < TRACK_COUNT; r++)
-    for (let c = 0; c < STEPS; c++)
-      patternBank[0][r][c] = pattern[r][c];
-  patternMoods[0] = 0;
-  patternOctaves[0] = 0;
+// Check if project system has data — if so, skip old single-state loading
+const hasProjectData = (function() {
+  try {
+    const raw = localStorage.getItem(PROJECTS_KEY);
+    if (raw) {
+      const p = JSON.parse(raw);
+      return Array.isArray(p) && p.length > 0 && !!localStorage.getItem('seq-project-0');
+    }
+  } catch(_) {}
+  return false;
+})();
+
+if (!hasProjectData) {
+  if (!loadState()) {
+    const demoSrc = [
+      /* 0 C3   */ [1,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0],
+      /* 1 D3   */ [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
+      /* 2 E3   */ [0,0,1,0, 0,0,0,0, 0,0,0,1, 0,0,1,0],
+      /* 3 F3   */ [0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0],
+      /* 4 G3   */ [0,0,0,1, 0,0,1,0, 0,0,1,0, 0,1,0,0],
+      /* 5 A3   */ [0,0,0,0, 0,1,0,0, 0,0,0,0, 0,0,0,0],
+      /* 6 B3   */ [0,1,0,0, 0,0,0,0, 0,0,0,0, 1,0,0,0],
+      /* 7 C4   */ [0,0,0,0, 1,0,0,1, 0,0,0,0, 0,0,0,1],
+      /* 8 Bass1*/ [1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,0,1],
+      /* 9 Bass2*/ [0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0],
+      /*10 Bass3*/ [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,1,0],
+      /*11 Bass4*/ [0,0,0,1, 0,0,0,0, 0,0,1,0, 0,0,0,0],
+      /*12 Kick */ [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0],
+      /*13 Snare*/ [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
+      /*14 HH Cl*/ [1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1],
+      /*15 HH Op*/ [0,0,0,0, 0,0,0,1, 0,0,0,0, 0,0,0,1],
+      /*16 Clap */ [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
+      /*17 Tom  */ [0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0],
+    ];
+    for (let r = 0; r < Math.min(TRACK_COUNT, demoSrc.length); r++)
+      for (let c = 0; c < STEPS; c++)
+        pattern[r][c] = demoSrc[r][c];
+    for (let r = 0; r < TRACK_COUNT; r++)
+      for (let c = 0; c < STEPS; c++)
+        updateCell(r, c);
+    for (let r = 0; r < TRACK_COUNT; r++)
+      for (let c = 0; c < STEPS; c++)
+        patternBank[0][r][c] = pattern[r][c];
+    patternMoods[0] = 0;
+    patternOctaves[0] = 0;
+  }
 }
 
 updateAllTrackSoundLabels();
