@@ -67,6 +67,7 @@ let patternMoods = new Array(MAX_PATTERNS).fill(0);
 let patternOctaves = new Array(MAX_PATTERNS).fill(0);
 let currentPatternIdx = 0;
 let recMode = false;
+let previewEnabled = true;
 
 let octaveShift = 0;
 let playing = false;
@@ -75,6 +76,7 @@ let scheduleStep = -1;
 let bpm = 110;
 let volume = 0.7;
 let currentMood = MOODS[0];
+let previewEnabled = true;
 
 let audioCtx = null;
 let masterGain = null;
@@ -342,6 +344,21 @@ function playPerc(sound, time, dur) {
   }
 }
 
+function previewCell(r, c) {
+  initAudio();
+  const track = TRACKS[r];
+  const stepDuration = 60 / bpm / 4;
+  const trkVol = trackVolumes[r];
+  if (track.type === 'perc') {
+    const sound = trackOverrides[r] || track.sound;
+    playPerc(sound, audioCtx.currentTime, stepDuration * 0.85, trkVol);
+  } else {
+    const freq = freqForMood(track, currentMood);
+    const wave = trackOverrides[r] || currentMood.wave;
+    playTone(freq, audioCtx.currentTime, stepDuration * 0.85, wave, currentMood.filter, (track.type === 'bass' ? 0.35 : 0.28) * trkVol);
+  }
+}
+
 const PERC_SOUNDS = ['kick','snare','hhClosed','hhOpen','clap','tom','rim','shaker','tamb','crash','ride','cowbell','conga'];
 const BASS_WAVES = ['default','sine','square','sawtooth','triangle'];
 
@@ -569,6 +586,7 @@ TRACKS.forEach((track, r) => {
       updateCell(r, c);
       updatePatNoteIndicators();
       autoSave();
+      if (previewEnabled && pattern[r][c]) previewCell(r, c);
     });
     fragment.appendChild(cell);
     cells.push(cell);
@@ -919,6 +937,7 @@ const copyBtn = document.getElementById('copyBtn');
 const octDown = document.getElementById('octDown');
 const octUp = document.getElementById('octUp');
 const octDisplay = document.getElementById('octDisplay');
+const previewToggle = document.getElementById('previewToggle');
 
 playBtn.addEventListener('click', togglePlay);
 stopBtn.addEventListener('click', stopPlayback);
@@ -934,6 +953,11 @@ importBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', (e) => {
   if (e.target.files[0]) importPattern(e.target.files[0]);
   fileInput.value = '';
+});
+
+previewToggle.addEventListener('change', () => {
+  previewEnabled = previewToggle.checked;
+  autoSave();
 });
 
 bpmSlider.addEventListener('input', () => {
@@ -1038,6 +1062,13 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
+  if (e.key === 'o') {
+    previewToggle.checked = !previewToggle.checked;
+    previewEnabled = previewToggle.checked;
+    autoSave();
+    return;
+  }
+
   const n = parseInt(e.key);
   if (n >= 1 && n <= 9 && n <= MAX_PATTERNS) {
     const pats = document.querySelectorAll('.pat-btn');
@@ -1063,6 +1094,7 @@ function saveState() {
       sectionMuted,
       octaveShift,
       trackOverrides: trackOverrides.map(v => v || null),
+      previewEnabled,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch(_) {}
@@ -1125,6 +1157,12 @@ function loadState() {
     if (data.trackVolumes) {
       for (let r = 0; r < Math.min(TRACK_COUNT, data.trackVolumes.length); r++)
         trackVolumes[r] = data.trackVolumes[r];
+    }
+
+    if (data.previewEnabled != null) {
+      previewEnabled = data.previewEnabled;
+      const previewToggle = document.getElementById('previewToggle');
+      if (previewToggle) previewToggle.checked = previewEnabled;
     }
 
     if (data.currentPattern != null) loadPattern(data.currentPattern);
