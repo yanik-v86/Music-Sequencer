@@ -81,7 +81,7 @@ let timelineTimerID = null;
 let tlCells = [];
 let timelineTracks = new Map(); // trackId -> { row, name, type, sound }
 let timelineDuration = 0; // in seconds
-let timelineResolution = 1/16; // default 1/16 note
+let timelineResolutionMode = 'steps'; // 'steps' | 'seconds'
 let timelineEventIndex = 0;
 let timelineNextEventTime = 0;
 
@@ -1222,7 +1222,9 @@ function buildTimelineGrid() {
 
   // Calculate grid resolution
   const stepDuration = 60 / bpm / 4;
-  const numCols = Math.max(Math.ceil(timelineDuration / timelineResolution) + 2, 32);
+  const numCols = timelineResolutionMode === 'seconds'
+    ? Math.max(Math.ceil(timelineDuration) + 2, 32)
+    : Math.max(Math.ceil(timelineDuration / stepDuration) + 2, 32);
 
   container.style.setProperty('--tl-steps', numCols);
   const frag = document.createDocumentFragment();
@@ -1236,9 +1238,8 @@ function buildTimelineGrid() {
   for (let c = 0; c < numCols; c++) {
     const el = document.createElement('div');
     el.className = 'tl-step-num';
-    if (tlResSelect.value === 'seconds') {
-      const sec = c * timelineResolution;
-      el.textContent = (sec % 1 === 0) ? sec.toFixed(0) : '';
+    if (timelineResolutionMode === 'seconds') {
+      el.textContent = (c % 1 === 0) ? c.toFixed(0) : '';
     } else {
       el.textContent = (c % 4 === 0) ? '' + (Math.floor(c / 4) + 1) : '';
     }
@@ -1271,7 +1272,9 @@ function buildTimelineGrid() {
   for (const ev of recordedEvents) {
     const trackInfo = timelineTracks.get(ev.track);
     if (!trackInfo) continue;
-    const col = Math.round(ev.time / stepDuration);
+    const col = timelineResolutionMode === 'seconds'
+      ? Math.round(ev.time)
+      : Math.round(ev.time / stepDuration);
     if (col >= 0 && col < numCols) {
       updateTimelineCell(trackInfo.row, col, true, trackInfo.type, trackInfo.sound);
     }
@@ -2203,12 +2206,7 @@ tlFileInput.addEventListener('change', (e) => {
 
 const tlResSelect = document.getElementById('tlResSelect');
 tlResSelect.addEventListener('change', () => {
-  const val = tlResSelect.value;
-  if (val === 'steps') {
-    timelineResolution = 60 / bpm / 4; // 1/16 note duration
-  } else {
-    timelineResolution = 1; // 1 second
-  }
+  timelineResolutionMode = tlResSelect.value;
   buildTimelineGrid();
 });
 
