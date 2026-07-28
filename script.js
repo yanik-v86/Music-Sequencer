@@ -1227,6 +1227,8 @@ function buildTimelineGrid() {
     : Math.max(Math.ceil(timelineDuration / stepDuration) + 2, 32);
 
   container.style.setProperty('--tl-steps', numCols);
+  // Force grid width
+  container.style.width = (30 + numCols * 28) + 'px';
   const frag = document.createDocumentFragment();
 
   // Header
