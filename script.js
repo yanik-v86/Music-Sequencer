@@ -1220,15 +1220,16 @@ function buildTimelineGrid() {
   }
   timelineTracks = usedTracks;
 
-  // Calculate grid resolution
+// Calculate grid resolution
   const stepDuration = 60 / bpm / 4;
   const numCols = timelineResolutionMode === 'seconds'
     ? Math.max(Math.ceil(timelineDuration) + 2, 32)
     : Math.max(Math.ceil(timelineDuration / stepDuration) + 2, 32);
 
   container.style.setProperty('--tl-steps', numCols);
-  // Force grid width
-  container.style.width = (30 + numCols * 28) + 'px';
+  const totalWidth = 30 + numCols * 28;
+  container.style.width = totalWidth + 'px';
+  container.style.minWidth = totalWidth + 'px';
   const frag = document.createDocumentFragment();
 
   // Header
