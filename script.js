@@ -704,7 +704,7 @@ function updateGhostNotes() {
     const playPat = patternBank[recReturnPattern];
     for (let r = 0; r < TRACK_COUNT; r++) {
       for (let c = 0; c < STEPS; c++) {
-        if (playPat[r][c]) {
+        if (playPat[r][c] && !pattern[r][c]) {
           const cell = getCellEl(r, c);
           cell.classList.add('ghost');
           const track = TRACKS[r];
