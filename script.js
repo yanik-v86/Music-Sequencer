@@ -82,6 +82,7 @@ let tlCells = [];
 let timelineTracks = new Map(); // trackId -> { row, name, type, sound }
 let timelineDuration = 0; // in seconds
 let timelineResolutionMode = 'steps'; // 'steps' | 'seconds'
+let timelineResolution = 60 / 110 / 4; // 16th-note duration at default BPM
 let timelineEventIndex = 0;
 let timelineNextEventTime = 0;
 
@@ -1222,14 +1223,13 @@ function buildTimelineGrid() {
 
 // Calculate grid resolution
   const stepDuration = 60 / bpm / 4;
+  timelineResolution = timelineResolutionMode === 'seconds' ? 1 : stepDuration;
   const numCols = timelineResolutionMode === 'seconds'
     ? Math.max(Math.ceil(timelineDuration) + 2, 32)
     : Math.max(Math.ceil(timelineDuration / stepDuration) + 2, 32);
 
-  container.style.setProperty('--tl-steps', numCols);
-  const totalWidth = 30 + numCols * 28;
-  container.style.width = totalWidth + 'px';
-  container.style.minWidth = totalWidth + 'px';
+  container.style.gridTemplateColumns = `30px repeat(${numCols}, 28px)`;
+  container.style.width = `${30 + numCols * 28}px`;
   const frag = document.createDocumentFragment();
 
   // Header
@@ -2210,6 +2210,7 @@ tlFileInput.addEventListener('change', (e) => {
 const tlResSelect = document.getElementById('tlResSelect');
 tlResSelect.addEventListener('change', () => {
   timelineResolutionMode = tlResSelect.value;
+  timelineResolution = timelineResolutionMode === 'seconds' ? 1 : (60 / bpm / 4);
   buildTimelineGrid();
 });
 
@@ -2299,6 +2300,7 @@ function saveState() {
       metronomeEnabled, metronomeVolume,
       quantizeStepSize,
       recordedEvents,
+      timelineResolution: tlResSelect.value,
       reverbMix,
       delayMix,
     };
@@ -2390,12 +2392,18 @@ function loadState() {
       if (quantSelect) quantSelect.value = '' + quantizeStepSize;
     }
     updateQuantGrid();
+    if (data.timelineResolution) {
+      tlResSelect.value = data.timelineResolution;
+      timelineResolutionMode = data.timelineResolution;
+    }
     if (data.recordedEvents) {
       recordedEvents = data.recordedEvents;
-      for (const ev of recordedEvents) if (tlCells[ev.track]) updateTimelineCell(ev.track, ev.step, true);
       if (recordedEvents.length > 0) {
+        timelineDuration = Math.max(...recordedEvents.map(ev => ev.time));
+        buildTimelineGrid();
         const wrap = document.getElementById('timelineWrap');
         if (wrap) wrap.style.display = '';
+        tlStatus.textContent = recordedEvents.length + ' events loaded, ' + timelineDuration.toFixed(1) + 's';
       }
     }
 

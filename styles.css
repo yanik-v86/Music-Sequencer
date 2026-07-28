@@ -655,11 +655,25 @@ input[type="range"]::-webkit-slider-thumb {
   border-radius: 10px;
   position: relative;
   width: 100%;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.2) transparent;
+}
+.tl-grid-wrap::-webkit-scrollbar {
+  height: 6px;
+}
+.tl-grid-wrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+.tl-grid-wrap::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.2);
+  border-radius: 3px;
+}
+.tl-grid-wrap::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.35);
 }
 .tl-grid {
   display: grid;
   grid-template-columns: 30px repeat(var(--tl-steps, 32), 28px);
-  min-width: max-content;
 }
 .tl-grid-header { display: contents; }
 .tl-grid-header .tl-step-num {
