@@ -653,12 +653,13 @@ input[type="range"]::-webkit-slider-thumb {
 .tl-grid-wrap {
   overflow-x: auto;
   border-radius: 10px;
+  position: relative;
 }
 .tl-grid {
   display: grid;
-  grid-template-columns: 30px repeat(var(--tl-steps, 32), 1fr);
-  gap: 0;
-  min-width: 360px;
+  grid-template-columns: 30px repeat(var(--tl-steps, 32), 28px);
+  min-width: max-content;
+}
 }
 .tl-grid-header { display: contents; }
 .tl-grid-header .tl-step-num {

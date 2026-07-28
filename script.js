@@ -1308,6 +1308,14 @@ function renderTimelinePlayhead() {
       if (cell) cell.classList.toggle('playhead', isActive);
     }
   }
+  // Auto-scroll to keep playhead visible
+  if (timelinePlayhead >= 0) {
+    const wrap = document.querySelector('.tl-grid-wrap');
+    const cellWidth = 28;
+    const labelWidth = 30;
+    const targetX = labelWidth + timelinePlayhead * cellWidth - wrap.clientWidth / 2;
+    wrap.scrollLeft = Math.max(0, targetX);
+  }
 }
 
 function startTimelinePlayback() {
