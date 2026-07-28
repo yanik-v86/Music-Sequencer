@@ -76,7 +76,6 @@ let scheduleStep = -1;
 let bpm = 110;
 let volume = 0.7;
 let currentMood = MOODS[0];
-let previewEnabled = true;
 
 let audioCtx = null;
 let masterGain = null;
