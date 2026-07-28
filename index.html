@@ -13,7 +13,10 @@
 
 <div class="container">
   <header>
-    <div class="logo"><span>◆</span>seq<em>uencer</em></div>
+    <div class="logo-group">
+      <div class="logo"><span>◆</span>seq<em>uencer</em></div>
+      <canvas id="visualizer" width="100" height="20"></canvas>
+    </div>
     <div class="controls-row">
       <label>mood <select id="moodSelect"></select></label>
       <label>bpm <input type="range" id="bpmSlider" min="40" max="200" value="110"></label>
@@ -25,6 +28,9 @@
       <span class="metro-group" id="metroGroup">
         <input type="range" id="metroVol" min="0" max="100" value="40">
       </span>
+      <span class="ctrl-divider"></span>
+      <label title="Reverb Amount">rev <input type="range" id="reverbSlider" min="0" max="100" value="25"></label>
+      <label title="Delay Amount">del <input type="range" id="delaySlider" min="0" max="100" value="15"></label>
     </div>
   </header>
 
