@@ -69,6 +69,17 @@ let patternOctaves = new Array(MAX_PATTERNS).fill(0);
 let currentPatternIdx = 0;
 let overdubMode = false;
 let previewEnabled = true;
+let metronomeEnabled = false;
+let metronomeVolume = 0.4;
+let quantizeStepSize = 1;
+let recordedEvents = [];
+let isRecording = false;
+let recordStartStep = 0;
+let timelinePlaying = false;
+let timelinePlayhead = -1;
+let timelineTimerID = null;
+let tlCells = [];
+const TL_STEPS = 32;
 
 let octaveShift = 0;
 let playing = false;
@@ -99,11 +110,12 @@ function isTrackMuted(r) {
   return muted[r] || isSectionMuted(TRACKS[r].type);
 }
 
-function freqForMood(track, mood) {
+function freqForMood(track, mood, octave) {
+  if (octave == null) octave = octaveShift;
   const intervals = SCALES[mood.scale];
   const semi = intervals[track.freqIdx];
-  const octave = (track.type === 'bass' ? -12 : 0) + octaveShift * 12;
-  return ROOT_FREQ * Math.pow(2, (semi + octave) / 12);
+  const o = (track.type === 'bass' ? -12 : 0) + octave * 12;
+  return ROOT_FREQ * Math.pow(2, (semi + o) / 12);
 }
 
 function initAudio() {
@@ -345,6 +357,49 @@ function playPerc(sound, time, dur) {
   }
 }
 
+function playMetronomeClick(time, isAccent) {
+  if (!audioCtx || !metronomeEnabled) return;
+  const osc = audioCtx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(isAccent ? 1200 : 900, time);
+  osc.frequency.exponentialRampToValueAtTime(400, time + 0.03);
+  const env = audioCtx.createGain();
+  const vol = metronomeVolume * (isAccent ? 0.5 : 0.25);
+  env.gain.setValueAtTime(vol, time);
+  env.gain.exponentialRampToValueAtTime(0.001, time + 0.03);
+  osc.connect(env);
+  env.connect(masterGain);
+  osc.start(time);
+  osc.stop(time + 0.03);
+}
+
+function quantizeStep(step) {
+  if (quantizeStepSize <= 0) return step;
+  const qs = Math.max(1, Math.round(quantizeStepSize));
+  return Math.round(step / qs) * qs;
+}
+
+function updateQuantGrid() {
+  const stepNums = document.querySelectorAll('.step-num');
+  stepNums.forEach((el, i) => {
+    if (i === 0) return;
+    const step = i - 1;
+    const isSnap = quantizeStepSize <= 0 || quantizeStep(step) === step;
+    el.style.opacity = isSnap ? '' : '0.25';
+  });
+}
+
+function updateTimelineGridForQuant() {
+  if (!tlCells.length) return;
+  const stepNums = document.querySelectorAll('.tl-step-num');
+  stepNums.forEach((el, i) => {
+    if (i === 0) return;
+    const step = i - 1;
+    const isSnap = quantizeStepSize <= 0 || quantizeStep(step) === step;
+    el.style.opacity = isSnap ? '' : '0.2';
+  });
+}
+
 function previewCell(r, c) {
   initAudio();
   const track = TRACKS[r];
@@ -380,14 +435,22 @@ function schedule() {
     for (let r = 0; r < TRACK_COUNT; r++) {
       if (!playPattern[r][scheduleStep] || isTrackMuted(r)) continue;
       const track = TRACKS[r];
-      const trkVol = trackVolumes[r];
+      const trkVol = getPlayTrackVolumes()[r];
       if (track.type === 'perc') {
-        const sound = trackOverrides[r] || track.sound;
+        const sound = getPlayTrackOverrides()[r] || track.sound;
         playPerc(sound, t, stepDuration * 0.85, trkVol);
       } else {
-        const freq = freqForMood(track, currentMood);
-        const wave = trackOverrides[r] || currentMood.wave;
-        playTone(freq, t, stepDuration * 0.85, wave, currentMood.filter, (track.type === 'bass' ? 0.35 : 0.28) * trkVol);
+        const freq = freqForMood(track, getPlayMood(), getPlayOctave());
+        const wave = getPlayTrackOverrides()[r] || getPlayMood().wave;
+        playTone(freq, t, stepDuration * 0.85, wave, getPlayMood().filter, (track.type === 'bass' ? 0.35 : 0.28) * trkVol);
+      }
+    }
+
+    if (metronomeEnabled) {
+      let metroInterval = 4;
+      if (quantizeStepSize > 0) metroInterval = Math.max(2, quantizeStepSize);
+      if (scheduleStep % metroInterval === 0) {
+        playMetronomeClick(t, scheduleStep === 0);
       }
     }
 
@@ -427,6 +490,199 @@ function stopPlayback() {
 function togglePlay() {
   if (playing) stopPlayback();
   else startPlayback();
+}
+
+function buildTimelineGrid() {
+  const container = document.getElementById('tlGrid');
+  container.innerHTML = '';
+  container.style.setProperty('--tl-steps', TL_STEPS);
+  tlCells = [];
+  const frag = document.createDocumentFragment();
+
+  const header = document.createElement('div');
+  header.className = 'tl-grid-header';
+  const corner = document.createElement('div');
+  corner.className = 'tl-step-num';
+  header.appendChild(corner);
+  for (let c = 0; c < TL_STEPS; c++) {
+    const el = document.createElement('div');
+    el.className = 'tl-step-num';
+    el.textContent = (c % 4 === 0) ? '' + (Math.floor(c / 4) + 1) : '';
+    header.appendChild(el);
+  }
+  frag.appendChild(header);
+
+  TRACKS.forEach((track, r) => {
+    const label = document.createElement('div');
+    label.className = 'tl-track-label';
+    label.textContent = track.name;
+    frag.appendChild(label);
+
+    const cells = [];
+    for (let c = 0; c < TL_STEPS; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'tl-cell';
+      cell.dataset.tlRow = r;
+      cell.dataset.tlCol = c;
+      frag.appendChild(cell);
+      cells.push(cell);
+    }
+    tlCells.push(cells);
+  });
+
+  container.appendChild(frag);
+  updateTimelineGridForQuant();
+}
+
+function updateTimelineCell(row, col, on) {
+  if (!tlCells[row]) return;
+  const cell = tlCells[row][col];
+  if (!cell) return;
+  if (on) {
+    cell.classList.add('on');
+    const track = TRACKS[row];
+    const palette = track.type === 'melody' ? currentMood.colors
+      : track.type === 'bass' ? ['#7d9a7a','#8aaa7a','#6a8a6a','#9aba8a']
+      : ['#c99a4a','#d4aa5a','#b88a3a','#e0b86a'];
+    cell.style.setProperty('--tl-cell-color', palette[row % palette.length]);
+  } else {
+    cell.classList.remove('on');
+  }
+}
+
+function renderTimelinePlayhead() {
+  for (let c = 0; c < TL_STEPS; c++) {
+    const isActive = (c === timelinePlayhead);
+    for (let r = 0; r < TRACK_COUNT && r < tlCells.length; r++) {
+      const cell = tlCells[r] && tlCells[r][c];
+      if (cell) cell.classList.toggle('playhead', isActive);
+    }
+  }
+}
+
+function startTimelinePlayback() {
+  initAudio();
+  if (timelinePlaying) return;
+  if (recordedEvents.length === 0) return;
+  timelinePlaying = true;
+  timelinePlayhead = -1;
+  tlStatus.textContent = 'playing';
+  tlPlayBtn.innerHTML = '▌▌ Pause';
+  scheduleTimeline();
+}
+
+function stopTimelinePlayback() {
+  timelinePlaying = false;
+  if (timelineTimerID) { clearTimeout(timelineTimerID); timelineTimerID = null; }
+  timelinePlayhead = -1;
+  tlStatus.textContent = 'idle';
+  tlPlayBtn.innerHTML = '▶ Play';
+  renderTimelinePlayhead();
+}
+
+function scheduleTimeline() {
+  if (!timelinePlaying) return;
+  const now = audioCtx.currentTime;
+  const stepDuration = 60 / bpm / 4;
+
+  const nextStep = timelinePlayhead + 1;
+  const nextTime = now + 0.01;
+  const qs = Math.max(1, Math.round(quantizeStepSize));
+  const maxStep = Math.ceil(TL_STEPS / qs) * qs;
+
+  if (nextStep >= maxStep) {
+    stopTimelinePlayback();
+    return;
+  }
+
+  timelinePlayhead = quantizeStep(nextStep);
+
+  const eventsAtStep = recordedEvents.filter(e => e.step === timelinePlayhead);
+  for (const ev of eventsAtStep) {
+    const track = TRACKS[ev.track];
+    if (!track || isTrackMuted(ev.track)) continue;
+    const trkVol = trackVolumes[ev.track];
+    if (track.type === 'perc') {
+      const sound = trackOverrides[ev.track] || track.sound;
+      playPerc(sound, nextTime, stepDuration * 0.85, trkVol);
+    } else {
+      const freq = freqForMood(track, currentMood);
+      const wave = trackOverrides[ev.track] || currentMood.wave;
+      playTone(freq, nextTime, stepDuration * 0.85, wave, currentMood.filter, (track.type === 'bass' ? 0.35 : 0.28) * trkVol);
+    }
+  }
+
+  requestAnimationFrame(() => renderTimelinePlayhead());
+  tlStatus.textContent = 'playing ' + (timelinePlayhead + 1) + '/' + TL_STEPS;
+  timelineTimerID = setTimeout(scheduleTimeline, stepDuration * 1000 * 0.5);
+}
+
+function clearTimeline() {
+  recordedEvents = [];
+  for (let r = 0; r < TRACK_COUNT && r < tlCells.length; r++)
+    for (let c = 0; c < TL_STEPS && c < tlCells[r].length; c++)
+      updateTimelineCell(r, c, false);
+  stopTimelinePlayback();
+  tlStatus.textContent = 'cleared';
+}
+
+function exportTimeline() {
+  const data = {
+    version: 1,
+    bpm, mood: currentMood.id,
+    events: recordedEvents,
+    trackOverrides: trackOverrides.map(v => v || null),
+  };
+  const blob = new Blob([JSON.stringify(data)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'sequence-recording.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importTimeline(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (data.events && Array.isArray(data.events)) {
+        recordedEvents = data.events;
+        for (let r = 0; r < TRACK_COUNT && r < tlCells.length; r++)
+          for (let c = 0; c < TL_STEPS && c < tlCells[r].length; c++)
+            updateTimelineCell(r, c, false);
+        for (const ev of recordedEvents)
+          updateTimelineCell(ev.track, ev.step, true);
+        tlStatus.textContent = recordedEvents.length + ' events loaded';
+        document.getElementById('timelineWrap').style.display = recordedEvents.length > 0 ? '' : 'none';
+      }
+    } catch(err) {
+      alert('Could not import: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+function initRecording() {
+  initAudio();
+  isRecording = !isRecording;
+  if (isRecording) {
+    if (!playing) startPlayback();
+    recordedEvents = [];
+    for (let r = 0; r < TRACK_COUNT && r < tlCells.length; r++)
+      for (let c = 0; c < TL_STEPS && c < tlCells[r].length; c++)
+        updateTimelineCell(r, c, false);
+    recordStartStep = (scheduleStep + 1) % STEPS;
+    recBtn.classList.add('is-recording');
+    recBtn.innerHTML = '● Rec ●';
+    document.getElementById('timelineWrap').style.display = '';
+    tlStatus.textContent = 'recording...';
+  } else {
+    recBtn.classList.remove('is-recording');
+    recBtn.innerHTML = '● Rec';
+    tlStatus.textContent = recordedEvents.length + ' events recorded';
+  }
 }
 
 function saveCurrentPattern() {
@@ -585,11 +841,22 @@ TRACKS.forEach((track, r) => {
     cell.addEventListener('mouseenter', () => highlightRow(r, true));
     cell.addEventListener('mouseleave', () => highlightRow(r, false));
     cell.addEventListener('click', () => {
-      pattern[r][c] = !pattern[r][c];
-      updateCell(r, c);
+      let targetCol = c;
+      if (quantizeStepSize > 1) {
+        targetCol = quantizeStep(c);
+      }
+      pattern[r][targetCol] = !pattern[r][targetCol];
+      updateCell(r, targetCol);
       updatePatNoteIndicators();
       autoSave();
-      if (previewEnabled && pattern[r][c]) previewCell(r, c);
+      if (previewEnabled && pattern[r][targetCol]) previewCell(r, targetCol);
+      if (isRecording && playing && pattern[r][targetCol]) {
+        const pos = ((scheduleStep >= 0 ? scheduleStep : 0) + 1) % TL_STEPS;
+        const quantPos = quantizeStep(pos);
+        recordedEvents.push({ track: r, step: quantPos });
+        updateTimelineCell(r, quantPos, true);
+        document.getElementById('timelineWrap').style.display = '';
+      }
     });
     fragment.appendChild(cell);
     cells.push(cell);
@@ -948,7 +1215,19 @@ const copyBtn = document.getElementById('copyBtn');
 const octDown = document.getElementById('octDown');
 const octUp = document.getElementById('octUp');
 const octDisplay = document.getElementById('octDisplay');
-const previewToggle = document.getElementById('previewToggle');
+const previewBtn = document.getElementById('previewBtn');
+const recBtn = document.getElementById('recBtn');
+const metroToggle = document.getElementById('metroToggle');
+const metroVol = document.getElementById('metroVol');
+const quantSelect = document.getElementById('quantSelect');
+const quantLabel = document.getElementById('quantLabel');
+const tlPlayBtn = document.getElementById('tlPlayBtn');
+const tlStopBtn = document.getElementById('tlStopBtn');
+const tlClearBtn = document.getElementById('tlClearBtn');
+const tlExportBtn = document.getElementById('tlExportBtn');
+const tlImportBtn = document.getElementById('tlImportBtn');
+const tlFileInput = document.getElementById('tlFileInput');
+const tlStatus = document.getElementById('tlStatus');
 
 playBtn.addEventListener('click', togglePlay);
 stopBtn.addEventListener('click', stopPlayback);
@@ -966,8 +1245,10 @@ fileInput.addEventListener('change', (e) => {
   fileInput.value = '';
 });
 
-previewToggle.addEventListener('change', () => {
-  previewEnabled = previewToggle.checked;
+previewBtn.addEventListener('click', () => {
+  previewEnabled = !previewEnabled;
+  previewBtn.classList.toggle('primary', previewEnabled);
+  previewBtn.textContent = previewEnabled ? 'Preview' : 'Preview';
   autoSave();
 });
 
@@ -994,11 +1275,33 @@ copyBtn.addEventListener('click', () => {
 
 let overdubReturnPattern = 0;
 let overdubLastEditedPattern = 0;
+let overdubMoodIdx = 0;
+let overdubOctave = 0;
+let overdubTrackVolumes = [];
+let overdubTrackOverrides = [];
+
+function getPlayMood() {
+  return overdubMode ? MOODS[overdubMoodIdx] : currentMood;
+}
+function getPlayOctave() {
+  return overdubMode ? overdubOctave : octaveShift;
+}
+function getPlayTrackVolumes() {
+  return overdubMode ? overdubTrackVolumes : trackVolumes;
+}
+function getPlayTrackOverrides() {
+  return overdubMode ? overdubTrackOverrides : trackOverrides;
+}
+
 odubBtn.addEventListener('click', () => {
   overdubMode = !overdubMode;
   if (overdubMode) {
     overdubReturnPattern = currentPatternIdx;
     overdubLastEditedPattern = currentPatternIdx;
+    overdubMoodIdx = patternMoods[overdubReturnPattern];
+    overdubOctave = patternOctaves[overdubReturnPattern];
+    overdubTrackVolumes = [...patternTrackVolumes[overdubReturnPattern]];
+    overdubTrackOverrides = [...trackOverrides];
   } else {
     saveCurrentPattern();
     if (overdubLastEditedPattern !== currentPatternIdx) loadPattern(overdubLastEditedPattern);
@@ -1026,6 +1329,42 @@ octUp.addEventListener('click', () => {
   autoSave();
 });
 
+metroToggle.addEventListener('click', () => {
+  metronomeEnabled = !metronomeEnabled;
+  metroToggle.classList.toggle('primary', metronomeEnabled);
+  autoSave();
+});
+
+metroVol.addEventListener('input', () => {
+  metronomeVolume = metroVol.value / 100;
+  autoSave();
+});
+
+quantSelect.addEventListener('change', () => {
+  quantizeStepSize = parseInt(quantSelect.value);
+  updateQuantGrid();
+  autoSave();
+});
+
+recBtn.addEventListener('click', () => {
+  initRecording();
+  autoSave();
+});
+
+tlPlayBtn.addEventListener('click', () => {
+  if (timelinePlaying) stopTimelinePlayback();
+  else startTimelinePlayback();
+});
+
+tlStopBtn.addEventListener('click', stopTimelinePlayback);
+tlClearBtn.addEventListener('click', clearTimeline);
+tlExportBtn.addEventListener('click', exportTimeline);
+tlImportBtn.addEventListener('click', () => tlFileInput.click());
+tlFileInput.addEventListener('change', (e) => {
+  if (e.target.files[0]) importTimeline(e.target.files[0]);
+  tlFileInput.value = '';
+});
+
 MOODS.forEach((m, i) => {
   const opt = document.createElement('option');
   opt.value = i;
@@ -1039,6 +1378,7 @@ moodSelect.addEventListener('change', () => {
   autoSave();
 });
 applyMood(MOODS[0]);
+if (previewEnabled) previewBtn.classList.add('primary');
 
 const modalOverlay = document.getElementById('modalOverlay');
 document.getElementById('modalClose').addEventListener('click', () => modalOverlay.classList.remove('open'));
@@ -1049,6 +1389,7 @@ document.addEventListener('keydown', (e) => {
 
   if (e.key === ' ') { e.preventDefault(); togglePlay(); return; }
   if (e.key === 's' && !e.ctrlKey && !e.metaKey) { stopPlayback(); return; }
+  if (e.key === 'r' && e.shiftKey) { recBtn.click(); return; }
   if (e.key === 'r') { odubBtn.click(); return; }
   if (e.key === 'c') { clearBtn.click(); return; }
   if (e.key === '?') { modalOverlay.classList.add('open'); return; }
@@ -1074,8 +1415,8 @@ document.addEventListener('keydown', (e) => {
   }
 
   if (e.key === 'o') {
-    previewToggle.checked = !previewToggle.checked;
-    previewEnabled = previewToggle.checked;
+    previewEnabled = !previewEnabled;
+    previewBtn.classList.toggle('primary', previewEnabled);
     autoSave();
     return;
   }
@@ -1107,6 +1448,9 @@ function saveState() {
       octaveShift,
       trackOverrides: trackOverrides.map(v => v || null),
       previewEnabled,
+      metronomeEnabled, metronomeVolume,
+      quantizeStepSize,
+      recordedEvents,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch(_) {}
@@ -1180,8 +1524,29 @@ function loadState() {
 
     if (data.previewEnabled != null) {
       previewEnabled = data.previewEnabled;
-      const previewToggle = document.getElementById('previewToggle');
-      if (previewToggle) previewToggle.checked = previewEnabled;
+      if (previewBtn) previewBtn.classList.toggle('primary', previewEnabled);
+    }
+
+    if (data.metronomeEnabled != null) {
+      metronomeEnabled = data.metronomeEnabled;
+      if (metroToggle) metroToggle.classList.toggle('primary', metronomeEnabled);
+    }
+    if (data.metronomeVolume != null) {
+      metronomeVolume = data.metronomeVolume;
+      if (metroVol) metroVol.value = metronomeVolume * 100;
+    }
+    if (data.quantizeStepSize != null) {
+      quantizeStepSize = data.quantizeStepSize;
+      if (quantSelect) quantSelect.value = '' + quantizeStepSize;
+    }
+    updateQuantGrid();
+    if (data.recordedEvents) {
+      recordedEvents = data.recordedEvents;
+      for (const ev of recordedEvents) if (tlCells[ev.track]) updateTimelineCell(ev.track, ev.step, true);
+      if (recordedEvents.length > 0) {
+        const wrap = document.getElementById('timelineWrap');
+        if (wrap) wrap.style.display = '';
+      }
     }
 
     if (data.currentPattern != null) loadPattern(data.currentPattern);
@@ -1241,5 +1606,8 @@ if (!loadState()) {
 updateAllTrackSoundLabels();
 updatePatNoteIndicators();
 updateVolumeBars();
+buildTimelineGrid();
+updateQuantGrid();
+updateTimelineGridForQuant();
 
 console.log('✦ Sequencer ready — click Play or press Space');
