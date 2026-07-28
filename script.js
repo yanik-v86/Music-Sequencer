@@ -67,7 +67,7 @@ let patternTrackVolumes = [];
 let patternMoods = new Array(MAX_PATTERNS).fill(0);
 let patternOctaves = new Array(MAX_PATTERNS).fill(0);
 let currentPatternIdx = 0;
-let recMode = false;
+let overdubMode = false;
 let previewEnabled = true;
 
 let octaveShift = 0;
@@ -364,7 +364,7 @@ const PERC_SOUNDS = ['kick','snare','hhClosed','hhOpen','clap','tom','rim','shak
 const BASS_WAVES = ['default','sine','square','sawtooth','triangle'];
 
 function getPlayPattern() {
-  return recMode ? patternBank[recReturnPattern] : pattern;
+  return overdubMode ? patternBank[overdubReturnPattern] : pattern;
 }
 
 function schedule() {
@@ -721,8 +721,8 @@ function updateGhostNotes() {
       getCellEl(r, c).classList.remove('ghost');
     }
   }
-  if (recMode && currentPatternIdx !== recReturnPattern) {
-    const playPat = patternBank[recReturnPattern];
+  if (overdubMode && currentPatternIdx !== overdubReturnPattern) {
+    const playPat = patternBank[overdubReturnPattern];
     for (let r = 0; r < TRACK_COUNT; r++) {
       for (let c = 0; c < STEPS; c++) {
         if (playPat[r][c] && !pattern[r][c]) {
@@ -893,8 +893,8 @@ function buildPatButtons() {
     btn.addEventListener('click', () => {
       const idx = parseInt(btn.dataset.pat);
       if (idx !== currentPatternIdx) {
-        if (recMode) {
-          recLastEditedPattern = idx;
+        if (overdubMode) {
+          overdubLastEditedPattern = idx;
           saveCurrentPattern();
           currentPatternIdx = idx;
           const src = patternBank[idx];
@@ -926,7 +926,7 @@ buildPatButtons();
 function updatePatButtons() {
   document.querySelectorAll('.pat-btn').forEach(b => {
     b.classList.toggle('is-active', parseInt(b.dataset.pat) === currentPatternIdx);
-    b.classList.toggle('is-playing', recMode && parseInt(b.dataset.pat) === recReturnPattern);
+    b.classList.toggle('is-playing', overdubMode && parseInt(b.dataset.pat) === overdubReturnPattern);
   });
 }
 
@@ -943,7 +943,7 @@ const bpmSlider = document.getElementById('bpmSlider');
 const bpmDisplay = document.getElementById('bpmDisplay');
 const volSlider = document.getElementById('volSlider');
 const moodSelect = document.getElementById('moodSelect');
-const recBtn = document.getElementById('recBtn');
+const odubBtn = document.getElementById('odubBtn');
 const copyBtn = document.getElementById('copyBtn');
 const octDown = document.getElementById('octDown');
 const octUp = document.getElementById('octUp');
@@ -992,20 +992,20 @@ copyBtn.addEventListener('click', () => {
   setTimeout(() => { copyBtn.textContent = 'Copy →'; }, 1200);
 });
 
-let recReturnPattern = 0;
-let recLastEditedPattern = 0;
-recBtn.addEventListener('click', () => {
-  recMode = !recMode;
-  if (recMode) {
-    recReturnPattern = currentPatternIdx;
-    recLastEditedPattern = currentPatternIdx;
+let overdubReturnPattern = 0;
+let overdubLastEditedPattern = 0;
+odubBtn.addEventListener('click', () => {
+  overdubMode = !overdubMode;
+  if (overdubMode) {
+    overdubReturnPattern = currentPatternIdx;
+    overdubLastEditedPattern = currentPatternIdx;
   } else {
     saveCurrentPattern();
-    if (recLastEditedPattern !== currentPatternIdx) loadPattern(recLastEditedPattern);
+    if (overdubLastEditedPattern !== currentPatternIdx) loadPattern(overdubLastEditedPattern);
     startPlayback();
   }
-  recBtn.classList.toggle('is-recording', recMode);
-  recBtn.innerHTML = recMode ? '<span class="dot"></span> Rec ●' : '<span class="dot"></span> Rec';
+  odubBtn.classList.toggle('is-overdubbing', overdubMode);
+  odubBtn.innerHTML = overdubMode ? '<span class="dot"></span> Overdub ●' : '<span class="dot"></span> Overdub';
   updateGhostNotes();
   updatePatButtons();
 });
@@ -1049,7 +1049,7 @@ document.addEventListener('keydown', (e) => {
 
   if (e.key === ' ') { e.preventDefault(); togglePlay(); return; }
   if (e.key === 's' && !e.ctrlKey && !e.metaKey) { stopPlayback(); return; }
-  if (e.key === 'r') { recBtn.click(); return; }
+  if (e.key === 'r') { odubBtn.click(); return; }
   if (e.key === 'c') { clearBtn.click(); return; }
   if (e.key === '?') { modalOverlay.classList.add('open'); return; }
   if (e.key === '/') { modalOverlay.classList.add('open'); return; }

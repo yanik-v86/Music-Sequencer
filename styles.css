@@ -310,7 +310,7 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .copy-btn:hover { border-color: var(--accent); color: var(--text); }
 
-.rec-btn {
+.odub-btn {
   background: var(--glass-bg);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -330,15 +330,15 @@ input[type="range"]::-webkit-slider-thumb {
   gap: 4px;
   margin-left: 4px;
 }
-.rec-btn:hover { border-color: var(--accent); color: var(--text); }
-.rec-btn .dot {
+.odub-btn:hover { border-color: var(--accent); color: var(--text); }
+.odub-btn .dot {
   width: 6px; height: 6px;
   border-radius: 50%;
   background: currentColor;
   transition: all .2s;
 }
-.rec-btn.is-recording { border-color: #ff4d4d; color: #ff4d4d; background: rgba(255,77,77,0.1); }
-.rec-btn.is-recording .dot { box-shadow: 0 0 8px #ff4d4d; }
+.odub-btn.is-overdubbing { border-color: #ff4d4d; color: #ff4d4d; background: rgba(255,77,77,0.1); }
+.odub-btn.is-overdubbing .dot { box-shadow: 0 0 8px #ff4d4d; }
 
 .grid-wrap {
   overflow-x: auto;
