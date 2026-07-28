@@ -373,6 +373,36 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .quant-label select:focus { border-color: var(--accent); }
 .quant-label select option { background: #1a1a2e; color: #fff; }
+
+.tl-res-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.tl-res-label select {
+  background: var(--glass-bg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--glass-border);
+  color: var(--text-soft);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  transition: border-color .12s;
+}
+.tl-res-label select:focus { border-color: var(--accent); }
+.tl-res-label select option { background: #1a1a2e; color: #fff; }
+
 .copy-btn {
   background: var(--glass-bg);
   backdrop-filter: blur(8px);

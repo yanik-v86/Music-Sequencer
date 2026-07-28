@@ -74,12 +74,16 @@ let metronomeVolume = 0.4;
 let quantizeStepSize = 1;
 let recordedEvents = [];
 let isRecording = false;
-let recordStartStep = 0;
+let recordStartTime = 0;
 let timelinePlaying = false;
-let timelinePlayhead = -1;
+let timelinePlayhead = 0;
 let timelineTimerID = null;
 let tlCells = [];
-const TL_STEPS = 32;
+let timelineTracks = new Map(); // trackId -> { row, name, type, sound }
+let timelineDuration = 0; // in seconds
+let timelineResolution = 1/16; // default 1/16 note
+let timelineEventIndex = 0;
+let timelineNextEventTime = 0;
 
 let pendingPatternIdx = null;
 let pendingOverdubToggle = false;
@@ -1096,10 +1100,56 @@ function schedule() {
       if (track.type === 'perc') {
         const sound = getPlayTrackOverrides()[r] || track.sound;
         playPerc(sound, t, stepDuration * 0.85, trkVol);
+        // Record if recording
+        if (isRecording) {
+          const relTime = t - recordStartTime;
+          recordedEvents.push({
+            track: r,
+            time: relTime,
+            type: 'perc',
+            sound: sound,
+            vol: trkVol,
+            dur: stepDuration * 0.85
+          });
+          // Track this track for timeline grid
+          if (!timelineTracks.has(r)) {
+            timelineTracks.set(r, { row: timelineTracks.size, name: track.name, type: 'perc', sound: sound });
+          }
+        }
       } else {
         const freq = freqForMood(track, getPlayMood(), getPlayOctave());
         const wave = getPlayTrackOverrides()[r] || getPlayMood().wave;
-        playTone(freq, t, stepDuration * 0.85, wave, getPlayMood().filter, (track.type === 'bass' ? 0.35 : 0.28) * trkVol, track.type);
+        const filter = getPlayMood().filter;
+        const baseVol = (track.type === 'bass' ? 0.35 : 0.28) * trkVol;
+        playTone(freq, t, stepDuration * 0.85, wave, filter, baseVol, track.type);
+        // Record if recording
+        if (isRecording) {
+          const relTime = t - recordStartTime;
+          recordedEvents.push({
+            track: r,
+            time: relTime,
+            type: track.type,
+            freq: freq,
+            wave: wave,
+            filter: filter,
+            vol: baseVol,
+            dur: stepDuration * 0.85,
+            mood: getPlayMood().id,
+            octave: getPlayOctave()
+          });
+          if (!timelineTracks.has(r)) {
+            timelineTracks.set(r, { row: timelineTracks.size, name: track.name, type: track.type });
+          }
+        }
+      }
+    }
+
+    // Update timeline duration during recording
+    if (isRecording) {
+      timelineDuration = t - recordStartTime;
+      // Update timeline grid in real-time (throttled)
+      if (Math.floor(timelineDuration / timelineResolution) !== Math.floor((t - stepDuration - recordStartTime) / timelineResolution)) {
+        buildTimelineGrid();
       }
     }
 
@@ -1156,55 +1206,93 @@ function togglePlay() {
 function buildTimelineGrid() {
   const container = document.getElementById('tlGrid');
   container.innerHTML = '';
-  container.style.setProperty('--tl-steps', TL_STEPS);
   tlCells = [];
+
+  // Determine which tracks have recorded events
+  const usedTracks = new Map(); // trackId -> { row, name, type, sound }
+  let row = 0;
+  for (const ev of recordedEvents) {
+    if (!usedTracks.has(ev.track)) {
+      const track = TRACKS[ev.track];
+      const name = track.type === 'perc' ? (ev.sound || track.sound) : track.name;
+      usedTracks.set(ev.track, { row: row++, name, type: track.type, sound: ev.sound || track.sound });
+    }
+  }
+  timelineTracks = usedTracks;
+
+  // Calculate grid resolution
+  const stepDuration = 60 / bpm / 4;
+  const numCols = Math.max(Math.ceil(timelineDuration / timelineResolution) + 2, 32);
+
+  container.style.setProperty('--tl-steps', numCols);
   const frag = document.createDocumentFragment();
 
+  // Header
   const header = document.createElement('div');
   header.className = 'tl-grid-header';
   const corner = document.createElement('div');
   corner.className = 'tl-step-num';
   header.appendChild(corner);
-  for (let c = 0; c < TL_STEPS; c++) {
+  for (let c = 0; c < numCols; c++) {
     const el = document.createElement('div');
     el.className = 'tl-step-num';
-    el.textContent = (c % 4 === 0) ? '' + (Math.floor(c / 4) + 1) : '';
+    if (tlResSelect.value === 'seconds') {
+      const sec = c * timelineResolution;
+      el.textContent = (sec % 1 === 0) ? sec.toFixed(0) : '';
+    } else {
+      el.textContent = (c % 4 === 0) ? '' + (Math.floor(c / 4) + 1) : '';
+    }
     header.appendChild(el);
   }
   frag.appendChild(header);
 
-  TRACKS.forEach((track, r) => {
+  // Track rows
+  for (const [trackId, info] of timelineTracks.entries()) {
     const label = document.createElement('div');
     label.className = 'tl-track-label';
-    label.textContent = track.name;
+    label.textContent = info.name;
     frag.appendChild(label);
 
     const cells = [];
-    for (let c = 0; c < TL_STEPS; c++) {
+    for (let c = 0; c < numCols; c++) {
       const cell = document.createElement('div');
       cell.className = 'tl-cell';
-      cell.dataset.tlRow = r;
+      cell.dataset.tlRow = info.row;
       cell.dataset.tlCol = c;
       frag.appendChild(cell);
       cells.push(cell);
     }
     tlCells.push(cells);
-  });
+  }
 
   container.appendChild(frag);
-  updateTimelineGridForQuant();
+
+  // Render recorded events
+  for (const ev of recordedEvents) {
+    const trackInfo = timelineTracks.get(ev.track);
+    if (!trackInfo) continue;
+    const col = Math.round(ev.time / stepDuration);
+    if (col >= 0 && col < numCols) {
+      updateTimelineCell(trackInfo.row, col, true, trackInfo.type, trackInfo.sound);
+    }
+  }
 }
 
-function updateTimelineCell(row, col, on) {
+function updateTimelineCell(row, col, on, type, sound) {
   if (!tlCells[row]) return;
   const cell = tlCells[row][col];
   if (!cell) return;
   if (on) {
     cell.classList.add('on');
-    const track = TRACKS[row];
-    const palette = track.type === 'melody' ? currentMood.colors
-      : track.type === 'bass' ? ['#7d9a7a','#8aaa7a','#6a8a6a','#9aba8a']
-      : ['#c99a4a','#d4aa5a','#b88a3a','#e0b86a'];
+    let palette;
+    if (type === 'melody') {
+      palette = currentMood.colors;
+    } else if (type === 'bass') {
+      palette = ['#7d9a7a','#8aaa7a','#6a8a6a','#9aba8a'];
+    } else {
+      const percColors = { kick:'#c96d4a', snare:'#d48a5a', hhClosed:'#e0a060', hhOpen:'#c97a50', clap:'#b84a3a', tom:'#d45a5a', rim:'#c94a3a', shaker:'#a060c0', tamb:'#c0a060', crash:'#ff6b35', ride:'#b537ff', cowbell:'#ff2d78', conga:'#00e5ff' };
+      palette = [percColors[sound] || '#c99a4a'];
+    }
     cell.style.setProperty('--tl-cell-color', palette[row % palette.length]);
   } else {
     cell.classList.remove('on');
@@ -1212,10 +1300,11 @@ function updateTimelineCell(row, col, on) {
 }
 
 function renderTimelinePlayhead() {
-  for (let c = 0; c < TL_STEPS; c++) {
+  const numCols = tlCells[0]?.length || 0;
+  for (let c = 0; c < numCols; c++) {
     const isActive = (c === timelinePlayhead);
-    for (let r = 0; r < TRACK_COUNT && r < tlCells.length; r++) {
-      const cell = tlCells[r] && tlCells[r][c];
+    for (let r = 0; r < tlCells.length; r++) {
+      const cell = tlCells[r][c];
       if (cell) cell.classList.toggle('playhead', isActive);
     }
   }
@@ -1227,8 +1316,12 @@ function startTimelinePlayback() {
   if (recordedEvents.length === 0) return;
   timelinePlaying = true;
   timelinePlayhead = -1;
+  timelineEventIndex = 0;
+  timelineNextEventTime = audioCtx.currentTime + 0.05;
   tlStatus.textContent = 'playing';
   tlPlayBtn.innerHTML = '▌▌ Pause';
+  // Sort events by time
+  recordedEvents.sort((a, b) => a.time - b.time);
   scheduleTimeline();
 }
 
@@ -1245,52 +1338,56 @@ function scheduleTimeline() {
   if (!timelinePlaying) return;
   const now = audioCtx.currentTime;
   const stepDuration = 60 / bpm / 4;
-
-  const nextStep = timelinePlayhead + 1;
-  const nextTime = now + 0.01;
-  const qs = Math.max(1, Math.round(quantizeStepSize));
-  const maxStep = Math.ceil(TL_STEPS / qs) * qs;
-
-  if (nextStep >= maxStep) {
+  const numCols = tlCells[0]?.length || 0;
+  
+  // Advance playhead based on time
+  const elapsed = now - timelineNextEventTime + 0.01; // small offset
+  timelinePlayhead = Math.floor(elapsed / stepDuration);
+  
+  // Check if we've passed the end
+  if (timelineEventIndex >= recordedEvents.length && timelinePlayhead > numCols) {
     stopTimelinePlayback();
     return;
   }
 
-  timelinePlayhead = quantizeStep(nextStep);
-
-  const eventsAtStep = recordedEvents.filter(e => e.step === timelinePlayhead);
-  for (const ev of eventsAtStep) {
+  // Play events at current time
+  while (timelineEventIndex < recordedEvents.length) {
+    const ev = recordedEvents[timelineEventIndex];
+    const eventTime = timelineNextEventTime + ev.time;
+    if (eventTime > now + 0.05) break; // schedule ahead
+    
     const track = TRACKS[ev.track];
-    if (!track || isTrackMuted(ev.track)) continue;
-    const trkVol = trackVolumes[ev.track];
-    if (track.type === 'perc') {
-      const sound = trackOverrides[ev.track] || track.sound;
-      playPerc(sound, nextTime, stepDuration * 0.85, trkVol);
-    } else {
-      const freq = freqForMood(track, currentMood);
-      const wave = trackOverrides[ev.track] || currentMood.wave;
-      playTone(freq, nextTime, stepDuration * 0.85, wave, currentMood.filter, (track.type === 'bass' ? 0.35 : 0.28) * trkVol, track.type);
+    if (track && !isTrackMuted(ev.track)) {
+      if (ev.type === 'perc') {
+        playPerc(ev.sound, eventTime, ev.dur || stepDuration * 0.85, ev.vol || 1.0);
+      } else {
+        playTone(ev.freq, eventTime, ev.dur || stepDuration * 0.85, ev.wave, ev.filter || currentMood.filter, ev.vol || 0.25, ev.type);
+      }
     }
+    timelineEventIndex++;
   }
 
   requestAnimationFrame(() => renderTimelinePlayhead());
-  tlStatus.textContent = 'playing ' + (timelinePlayhead + 1) + '/' + TL_STEPS;
+  const maxTime = recordedEvents.length > 0 ? recordedEvents[recordedEvents.length - 1].time : 0;
+  tlStatus.textContent = 'playing ' + (now - timelineNextEventTime).toFixed(1) + 's / ' + maxTime.toFixed(1) + 's';
   timelineTimerID = setTimeout(scheduleTimeline, stepDuration * 1000 * 0.5);
 }
 
 function clearTimeline() {
   recordedEvents = [];
-  for (let r = 0; r < TRACK_COUNT && r < tlCells.length; r++)
-    for (let c = 0; c < TL_STEPS && c < tlCells[r].length; c++)
-      updateTimelineCell(r, c, false);
+  timelineTracks.clear();
+  timelineDuration = 0;
+  timelineEventIndex = 0;
+  buildTimelineGrid();
   stopTimelinePlayback();
   tlStatus.textContent = 'cleared';
 }
 
 function exportTimeline() {
   const data = {
-    version: 1,
+    version: 2,
     bpm, mood: currentMood.id,
+    timelineResolution: tlResSelect.value,
     events: recordedEvents,
     trackOverrides: trackOverrides.map(v => v || null),
   };
@@ -1310,11 +1407,10 @@ function importTimeline(file) {
       const data = JSON.parse(e.target.result);
       if (data.events && Array.isArray(data.events)) {
         recordedEvents = data.events;
-        for (let r = 0; r < TRACK_COUNT && r < tlCells.length; r++)
-          for (let c = 0; c < TL_STEPS && c < tlCells[r].length; c++)
-            updateTimelineCell(r, c, false);
-        for (const ev of recordedEvents)
-          updateTimelineCell(ev.track, ev.step, true);
+        if (data.timelineResolution) {
+          tlResSelect.value = data.timelineResolution;
+        }
+        buildTimelineGrid();
         tlStatus.textContent = recordedEvents.length + ' events loaded';
         document.getElementById('timelineWrap').style.display = recordedEvents.length > 0 ? '' : 'none';
       }
@@ -1331,10 +1427,10 @@ function initRecording() {
   if (isRecording) {
     if (!playing) startPlayback();
     recordedEvents = [];
-    for (let r = 0; r < TRACK_COUNT && r < tlCells.length; r++)
-      for (let c = 0; c < TL_STEPS && c < tlCells[r].length; c++)
-        updateTimelineCell(r, c, false);
-    recordStartStep = (scheduleStep + 1) % STEPS;
+    timelineTracks.clear();
+    timelineDuration = 0;
+    recordStartTime = audioCtx.currentTime;
+    buildTimelineGrid();
     recBtn.classList.add('is-recording');
     recBtn.innerHTML = '● Rec ●';
     document.getElementById('timelineWrap').style.display = '';
@@ -1342,7 +1438,9 @@ function initRecording() {
   } else {
     recBtn.classList.remove('is-recording');
     recBtn.innerHTML = '● Rec';
-    tlStatus.textContent = recordedEvents.length + ' events recorded';
+    timelineDuration = audioCtx.currentTime - recordStartTime;
+    tlStatus.textContent = recordedEvents.length + ' events recorded, ' + timelineDuration.toFixed(1) + 's';
+    buildTimelineGrid();
   }
 }
 
@@ -2093,6 +2191,17 @@ tlImportBtn.addEventListener('click', () => tlFileInput.click());
 tlFileInput.addEventListener('change', (e) => {
   if (e.target.files[0]) importTimeline(e.target.files[0]);
   tlFileInput.value = '';
+});
+
+const tlResSelect = document.getElementById('tlResSelect');
+tlResSelect.addEventListener('change', () => {
+  const val = tlResSelect.value;
+  if (val === 'steps') {
+    timelineResolution = 60 / bpm / 4; // 1/16 note duration
+  } else {
+    timelineResolution = 1; // 1 second
+  }
+  buildTimelineGrid();
 });
 
 MOODS.forEach((m, i) => {
