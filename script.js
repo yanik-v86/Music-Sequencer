@@ -63,6 +63,7 @@ let trackOverrides = new Array(TRACK_COUNT).fill(null);
 let trackVolumes = new Array(TRACK_COUNT).fill(1.0);
 let sectionMuted = { melody: false, bass: false, percussion: false };
 let patternBank = [];
+let patternTrackVolumes = [];
 let patternMoods = new Array(MAX_PATTERNS).fill(0);
 let patternOctaves = new Array(MAX_PATTERNS).fill(0);
 let currentPatternIdx = 0;
@@ -85,6 +86,7 @@ const SCHEDULE_AHEAD = 0.1;
 
 for (let p = 0; p < MAX_PATTERNS; p++) {
   patternBank.push(Array.from({length:TRACK_COUNT}, () => Array(STEPS).fill(false)));
+  patternTrackVolumes.push(new Array(TRACK_COUNT).fill(1.0));
 }
 
 const sectionName = { melody:'melody', bass:'bass', perc:'percussion' };
@@ -442,6 +444,7 @@ function loadPattern(idx) {
   for (let r = 0; r < TRACK_COUNT; r++)
     for (let c = 0; c < STEPS; c++)
       pattern[r][c] = src[r][c];
+  trackVolumes = patternTrackVolumes[idx];
   for (let r = 0; r < TRACK_COUNT; r++)
     for (let c = 0; c < STEPS; c++)
       updateCell(r, c);
@@ -451,6 +454,7 @@ function loadPattern(idx) {
   updateOctaveDisplay();
   updatePatButtons();
   updatePatNoteIndicators();
+  updateVolumeBars();
   autoSave();
 }
 
@@ -785,9 +789,10 @@ function clearPattern() {
 function exportPattern() {
   saveCurrentPattern();
   const data = {
-    version: 3,
+    version: 4,
     bpm, mood: currentMood.id,
     patterns: patternBank,
+    patternTrackVolumes: patternTrackVolumes.map(v => Array.from(v)),
     patternMoods: patternMoods.map(i => MOODS[i].id),
     patternOctaves,
     currentPattern: currentPatternIdx,
@@ -825,6 +830,11 @@ function importPattern(file) {
             patternOctaves[p] = data.patternOctaves[p];
           } else {
             patternOctaves[p] = 0;
+          }
+          if (data.version >= 4 && data.patternTrackVolumes && data.patternTrackVolumes[p]) {
+            const vsrc = data.patternTrackVolumes[p];
+            for (let r = 0; r < Math.min(TRACK_COUNT, vsrc.length); r++)
+              patternTrackVolumes[p][r] = vsrc[r];
           }
         }
         if (data.currentPattern != null) loadPattern(data.currentPattern);
@@ -891,6 +901,7 @@ function buildPatButtons() {
           for (let r = 0; r < TRACK_COUNT; r++)
             for (let c = 0; c < STEPS; c++)
               pattern[r][c] = src[r][c];
+          trackVolumes = patternTrackVolumes[idx];
           for (let r = 0; r < TRACK_COUNT; r++)
             for (let c = 0; c < STEPS; c++)
               updateCell(r, c);
@@ -900,6 +911,7 @@ function buildPatButtons() {
           updateOctaveDisplay();
           updatePatButtons();
           updateGhostNotes();
+          updateVolumeBars();
           autoSave();
         } else {
           loadPattern(idx);
@@ -1082,8 +1094,9 @@ function saveState() {
   saveCurrentPattern();
   try {
     const data = {
-      version: 3,
+      version: 4,
       patternBank,
+      patternTrackVolumes: patternTrackVolumes.map(v => Array.from(v)),
       patternMoods: patternMoods.map(i => MOODS[i].id),
       patternOctaves,
       currentPattern: currentPatternIdx,
@@ -1153,9 +1166,16 @@ function loadState() {
         trackOverrides[r] = data.trackOverrides[r] || null;
     }
 
-    if (data.trackVolumes) {
-      for (let r = 0; r < Math.min(TRACK_COUNT, data.trackVolumes.length); r++)
-        trackVolumes[r] = data.trackVolumes[r];
+    if (data.patternTrackVolumes) {
+      for (let p = 0; p < Math.min(MAX_PATTERNS, data.patternTrackVolumes.length); p++) {
+        const src = data.patternTrackVolumes[p];
+        for (let r = 0; r < Math.min(TRACK_COUNT, src.length); r++)
+          patternTrackVolumes[p][r] = src[r];
+      }
+    } else if (data.trackVolumes) {
+      for (let p = 0; p < MAX_PATTERNS; p++)
+        for (let r = 0; r < Math.min(TRACK_COUNT, data.trackVolumes.length); r++)
+          patternTrackVolumes[p][r] = data.trackVolumes[r];
     }
 
     if (data.previewEnabled != null) {
