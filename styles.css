@@ -320,6 +320,24 @@ input[type="range"]::-webkit-slider-thumb {
 .pat-btn.is-active.has-notes::after { background:#fff; }
 .pat-btn.is-playing::after { content:''; display:block; width:4px; height:4px; border-radius:50%; background:#ff4d4d; margin:0 auto; position:relative; top:1px; box-shadow: 0 0 6px #ff4d4d; }
 .pat-btn.is-active.is-playing::after { background:#fff; }
+.pat-btn.is-queued {
+  animation: pat-queued-pulse 1.2s ease-in-out infinite;
+  border-color: var(--accent-gold);
+  box-shadow: 0 0 0 2px var(--accent-gold-light);
+}
+@keyframes pat-queued-pulse {
+  0%, 100% { border-color: var(--accent-gold); box-shadow: 0 0 0 2px var(--accent-gold-light); }
+  50% { border-color: var(--accent-gold); box-shadow: 0 0 0 4px var(--accent-gold-light), 0 0 12px var(--accent-gold); }
+}
+.pat-btn.is-active.is-queued {
+  animation: pat-queued-active-pulse 1.2s ease-in-out infinite;
+  border-color: #fff;
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.15);
+}
+@keyframes pat-queued-active-pulse {
+  0%, 100% { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,0.15), 0 0 20px rgba(255,77,138,0.3); }
+  50% { border-color: #fff; box-shadow: 0 0 0 4px rgba(255,255,255,0.25), 0 0 30px rgba(255,77,138,0.5); }
+}
 
 .looper-actions {
   display: flex;

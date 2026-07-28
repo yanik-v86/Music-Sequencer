@@ -81,6 +81,9 @@ let timelineTimerID = null;
 let tlCells = [];
 const TL_STEPS = 32;
 
+let pendingPatternIdx = null;
+let pendingOverdubToggle = false;
+
 let octaveShift = 0;
 let playing = false;
 let displayStep = -1;
@@ -1068,8 +1071,23 @@ function schedule() {
   const playPattern = getPlayPattern();
 
   while (nextNoteTime < now + SCHEDULE_AHEAD) {
+    const prevStep = scheduleStep;
     scheduleStep = (scheduleStep + 1) % STEPS;
     const t = nextNoteTime;
+
+    // Apply queued changes at loop boundary (wrap from last step to first)
+    if (prevStep === STEPS - 1 && scheduleStep === 0) {
+      if (pendingPatternIdx !== null) {
+        loadPattern(pendingPatternIdx);
+        pendingPatternIdx = null;
+        updatePatButtons();
+      }
+      if (pendingOverdubToggle) {
+        toggleOverdub();
+        pendingOverdubToggle = false;
+        updatePatButtons();
+      }
+    }
 
     for (let r = 0; r < TRACK_COUNT; r++) {
       if (!playPattern[r][scheduleStep] || isTrackMuted(r)) continue;
@@ -1119,11 +1137,15 @@ function startPlayback() {
 function stopPlayback() {
   playing = false;
   if (timerID) { clearTimeout(timerID); timerID = null; }
+  // Clear pending queue on stop
+  pendingPatternIdx = null;
+  pendingOverdubToggle = false;
   displayStep = -1;
   statusDisplay.textContent = 'stopped';
   stepDisplay.textContent = '';
   playBtn.innerHTML = '▶ Play';
   renderPlayhead();
+  updatePatButtons();
 }
 
 function togglePlay() {
@@ -1834,7 +1856,11 @@ function buildPatButtons() {
     btn.addEventListener('click', () => {
       const idx = parseInt(btn.dataset.pat);
       if (idx !== currentPatternIdx) {
-        if (overdubMode) {
+        if (playing) {
+          pendingPatternIdx = idx;
+          if (overdubMode) overdubLastEditedPattern = idx;
+          updatePatButtons();
+        } else if (overdubMode) {
           overdubLastEditedPattern = idx;
           saveCurrentPattern();
           currentPatternIdx = idx;
@@ -1866,8 +1892,10 @@ buildPatButtons();
 
 function updatePatButtons() {
   document.querySelectorAll('.pat-btn').forEach(b => {
-    b.classList.toggle('is-active', parseInt(b.dataset.pat) === currentPatternIdx);
-    b.classList.toggle('is-playing', overdubMode && parseInt(b.dataset.pat) === overdubReturnPattern);
+    const idx = parseInt(b.dataset.pat);
+    b.classList.toggle('is-active', idx === currentPatternIdx);
+    b.classList.toggle('is-playing', overdubMode && idx === overdubReturnPattern);
+    b.classList.toggle('is-queued', playing && idx === pendingPatternIdx);
   });
 }
 
@@ -1986,7 +2014,7 @@ function getPlayTrackOverrides() {
   return overdubMode ? overdubTrackOverrides : trackOverrides;
 }
 
-odubBtn.addEventListener('click', () => {
+function toggleOverdub() {
   overdubMode = !overdubMode;
   if (overdubMode) {
     overdubReturnPattern = currentPatternIdx;
@@ -1997,6 +2025,7 @@ odubBtn.addEventListener('click', () => {
     overdubTrackOverrides = [...trackOverrides];
   } else {
     saveCurrentPattern();
+    // Exit to the currently active pattern (not overdubReturnPattern if it changed)
     if (overdubLastEditedPattern !== currentPatternIdx) loadPattern(overdubLastEditedPattern);
     startPlayback();
   }
@@ -2004,6 +2033,14 @@ odubBtn.addEventListener('click', () => {
   odubBtn.innerHTML = overdubMode ? '<span class="dot"></span> Overdub ●' : '<span class="dot"></span> Overdub';
   updateGhostNotes();
   updatePatButtons();
+}
+
+odubBtn.addEventListener('click', () => {
+  if (playing) {
+    pendingOverdubToggle = true;
+  } else {
+    toggleOverdub();
+  }
 });
 
 function updateOctaveDisplay() {
