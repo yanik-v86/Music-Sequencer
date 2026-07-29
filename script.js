@@ -62,7 +62,7 @@ const SECTION_RANGES = {
   percussion: [16, 22],
 };
 
-let pattern = Array.from({length:TRACK_COUNT}, () => Array(STEPS).fill(false));
+let pattern = Array.from({length:TRACK_COUNT}, () => Array(STEPS).fill(0));
 let muted = new Array(TRACK_COUNT).fill(false);
 let trackOverrides = new Array(TRACK_COUNT).fill(null);
 let trackVolumes = new Array(TRACK_COUNT).fill(1.0);
@@ -123,7 +123,7 @@ let timerID = null;
 const SCHEDULE_AHEAD = 0.1;
 
 for (let p = 0; p < MAX_PATTERNS; p++) {
-  patternBank.push(Array.from({length:TRACK_COUNT}, () => Array(STEPS).fill(false)));
+  patternBank.push(Array.from({length:TRACK_COUNT}, () => Array(STEPS).fill(0)));
   patternTrackVolumes.push(new Array(TRACK_COUNT).fill(1.0));
 }
 
@@ -1070,7 +1070,8 @@ function previewCell(r, c) {
   } else {
     const freq = freqForMood(track, currentMood);
     const wave = trackOverrides[r] || currentMood.wave;
-    playTone(freq, audioCtx.currentTime, stepDuration * 0.85, wave, currentMood.filter, (track.type === 'bass' ? 0.35 : 0.28) * trkVol, track.type);
+    const gate = track.type === 'melody' ? (pattern[r][c] || 1) : 1;
+    playTone(freq, audioCtx.currentTime, stepDuration * gate * 0.85, wave, currentMood.filter, (track.type === 'bass' ? 0.35 : 0.28) * trkVol, track.type);
   }
 }
 
@@ -1134,7 +1135,9 @@ function schedule() {
         const wave = getPlayTrackOverrides()[r] || getPlayMood().wave;
         const filter = getPlayMood().filter;
         const baseVol = (track.type === 'bass' ? 0.35 : 0.28) * trkVol;
-        playTone(freq, t, stepDuration * 0.85, wave, filter, baseVol, track.type);
+        const gate = track.type === 'melody' ? playPattern[r][scheduleStep] : 1;
+        const dur = stepDuration * gate * 0.85;
+        playTone(freq, t, dur, wave, filter, baseVol, track.type);
         // Record if recording
         if (isRecording) {
           const relTime = t - recordStartTime;
@@ -1146,7 +1149,7 @@ function schedule() {
             wave: wave,
             filter: filter,
             vol: baseVol,
-            dur: stepDuration * 0.85,
+            dur: dur,
             mood: getPlayMood().id,
             octave: getPlayOctave()
           });
@@ -1738,7 +1741,7 @@ TRACKS.forEach((track, r) => {
       if (quantizeStepSize > 1) {
         targetCol = quantizeStep(c);
       }
-      pattern[r][targetCol] = !pattern[r][targetCol];
+      pattern[r][targetCol] = pattern[r][targetCol] > 0 ? 0 : 1;
       updateCell(r, targetCol);
       updatePatNoteIndicators();
       autoSave();
@@ -1750,6 +1753,13 @@ TRACKS.forEach((track, r) => {
         updateTimelineCell(r, quantPos, true);
         document.getElementById('timelineWrap').style.display = '';
       }
+    });
+    cell.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      let targetCol = c;
+      if (quantizeStepSize > 1) targetCol = quantizeStep(c);
+      showCellCtxMenu(r, targetCol, e.clientX, e.clientY);
     });
     fragment.appendChild(cell);
     cells.push(cell);
@@ -1842,6 +1852,24 @@ function updatePatNoteIndicators() {
   }
 }
 
+function showCellCtxMenu(r, c, x, y) {
+  const currentVal = pattern[r][c] || 0;
+  const gateOptions = [1, 2, 3, 4, 6, 8, 12, 16];
+  let html = '<div class="context-menu-header">Note length</div>';
+  gateOptions.forEach(v => {
+    const active = v === currentVal ? ' is-active' : '';
+    html += '<div class="context-menu-item' + active + '" data-value="' + v + '">' + v + (v === 1 ? ' step' : ' steps') + '</div>';
+  });
+  ctxMenu.innerHTML = html;
+  ctxMenu.dataset.cellRow = r;
+  ctxMenu.dataset.cellCol = c;
+  ctxMenu.removeAttribute('data-track-row');
+  ctxMenu.removeAttribute('data-section');
+  ctxMenu.style.left = Math.min(x, window.innerWidth - 170) + 'px';
+  ctxMenu.style.top = Math.min(y, window.innerHeight - 300) + 'px';
+  ctxMenu.classList.add('open');
+}
+
 function showSectionCtxMenu(sec, x, y) {
   let options = [];
   if (sec === 'percussion') {
@@ -1871,6 +1899,8 @@ function showSectionCtxMenu(sec, x, y) {
   ctxMenu.innerHTML = html;
   ctxMenu.dataset.section = sec;
   ctxMenu.removeAttribute('data-track-row');
+  ctxMenu.removeAttribute('data-cell-row');
+  ctxMenu.removeAttribute('data-cell-col');
   ctxMenu.style.left = Math.min(x, window.innerWidth - 170) + 'px';
   ctxMenu.style.top = Math.min(y, window.innerHeight - 300) + 'px';
   ctxMenu.classList.add('open');
@@ -1881,6 +1911,16 @@ ctxMenu.addEventListener('click', (e) => {
   const item = e.target.closest('.context-menu-item');
   if (!item) return;
   const val = item.dataset.value;
+  if (ctxMenu.dataset.cellRow != null) {
+    const row = parseInt(ctxMenu.dataset.cellRow);
+    const col = parseInt(ctxMenu.dataset.cellCol);
+    pattern[row][col] = parseInt(val);
+    updateCell(row, col);
+    updatePatNoteIndicators();
+    autoSave();
+    ctxMenu.classList.remove('open');
+    return;
+  }
   if (ctxMenu.dataset.section) {
     const sec = ctxMenu.dataset.section;
     const [start, end] = SECTION_RANGES[sec];
@@ -1937,6 +1977,8 @@ function showCtxMenu(r, x, y) {
   ctxMenu.innerHTML = html;
   ctxMenu.dataset.trackRow = r;
   ctxMenu.removeAttribute('data-section');
+  ctxMenu.removeAttribute('data-cell-row');
+  ctxMenu.removeAttribute('data-cell-col');
   ctxMenu.style.left = Math.min(x, window.innerWidth - 170) + 'px';
   ctxMenu.style.top = Math.min(y, window.innerHeight - 300) + 'px';
   ctxMenu.classList.add('open');
@@ -1944,8 +1986,10 @@ function showCtxMenu(r, x, y) {
 
 function updateCell(row, col) {
   const cell = getCellEl(row, col);
-  if (pattern[row][col]) {
+  const val = pattern[row][col];
+  if (val > 0) {
     cell.classList.add('on');
+    cell.dataset.gate = val;
     const track = TRACKS[row];
     const palette = track.type === 'melody' ? currentMood.colors
       : track.type === 'bass' ? ['#7d9a7a','#8aaa7a','#6a8a6a','#9aba8a']
@@ -1953,6 +1997,7 @@ function updateCell(row, col) {
     cell.style.setProperty('--cell-color', palette[row % palette.length]);
   } else {
     cell.classList.remove('on');
+    cell.removeAttribute('data-gate');
   }
 }
 
@@ -2003,7 +2048,7 @@ function randomPattern() {
   for (let r = 0; r < TRACK_COUNT; r++) {
     const density = TRACKS[r].type === 'perc' ? 0.35 : 0.25;
     for (let c = 0; c < STEPS; c++) {
-      pattern[r][c] = Math.random() < density;
+      pattern[r][c] = Math.random() < density ? 1 : 0;
     }
   }
   const currentSound = (r) => trackOverrides[r] || TRACKS[r].sound;
@@ -2020,7 +2065,7 @@ function randomPattern() {
 function clearPattern() {
   for (let r = 0; r < TRACK_COUNT; r++)
     for (let c = 0; c < STEPS; c++)
-      pattern[r][c] = false;
+      pattern[r][c] = 0;
   for (let r = 0; r < TRACK_COUNT; r++)
     for (let c = 0; c < STEPS; c++)
       updateCell(r, c);
@@ -2059,7 +2104,7 @@ function importPattern(file) {
           const src = data.patterns[p];
           for (let r = 0; r < Math.min(TRACK_COUNT, src.length); r++)
             for (let c = 0; c < Math.min(STEPS, src[r].length); c++)
-              patternBank[p][r][c] = !!src[r][c];
+              patternBank[p][r][c] = src[r][c] ? +src[r][c] : 0;
           if (data.version >= 3 && data.patternMoods && data.patternMoods[p]) {
             const mi = MOODS.findIndex(m => m.id === data.patternMoods[p]);
             patternMoods[p] = mi >= 0 ? mi : 0;
@@ -2102,7 +2147,7 @@ function importPattern(file) {
       } else if (data.pattern) {
         for (let r = 0; r < Math.min(TRACK_COUNT, data.pattern.length); r++)
           for (let c = 0; c < Math.min(STEPS, data.pattern[r].length); c++)
-            pattern[r][c] = !!data.pattern[r][c];
+            pattern[r][c] = data.pattern[r][c] ? +data.pattern[r][c] : 0;
         for (let r = 0; r < TRACK_COUNT; r++)
           for (let c = 0; c < STEPS; c++)
             updateCell(r, c);
@@ -2568,7 +2613,7 @@ function loadState() {
       const src = data.patternBank[p];
       for (let r = 0; r < Math.min(TRACK_COUNT, src.length); r++)
         for (let c = 0; c < Math.min(STEPS, src[r].length); c++)
-          patternBank[p][r][c] = !!src[r][c];
+          patternBank[p][r][c] = src[r][c] ? +src[r][c] : 0;
       if (data.patternMoods && data.patternMoods[p]) {
         const mi = MOODS.findIndex(m => m.id === data.patternMoods[p]);
         patternMoods[p] = mi >= 0 ? mi : 0;
@@ -2785,7 +2830,7 @@ function loadProjectFromStorage(idx) {
       const src = d.patternBank[p];
       for (let r = 0; r < Math.min(TRACK_COUNT, src.length); r++)
         for (let c = 0; c < Math.min(STEPS, src[r].length); c++)
-          patternBank[p][r][c] = !!src[r][c];
+          patternBank[p][r][c] = src[r][c] ? +src[r][c] : 0;
       if (d.patternMoods && d.patternMoods[p]) {
         const mi = MOODS.findIndex(m => m.id === d.patternMoods[p]);
         patternMoods[p] = mi >= 0 ? mi : 0;
@@ -2866,10 +2911,10 @@ function newProject() {
   for (let p = 0; p < MAX_PATTERNS; p++)
     for (let r = 0; r < TRACK_COUNT; r++)
       for (let c = 0; c < STEPS; c++)
-        patternBank[p][r][c] = false;
+        patternBank[p][r][c] = 0;
   for (let r = 0; r < TRACK_COUNT; r++)
     for (let c = 0; c < STEPS; c++)
-      pattern[r][c] = false;
+      pattern[r][c] = 0;
   for (let r = 0; r < TRACK_COUNT; r++)
     for (let c = 0; c < STEPS; c++)
       updateCell(r, c);
@@ -2969,13 +3014,13 @@ function initDemoPatterns() {
   for (let p = 0; p < MAX_PATTERNS; p++) {
     for (let r = 0; r < TRACK_COUNT; r++)
       for (let c = 0; c < STEPS; c++)
-        patternBank[p][r][c] = false;
+        patternBank[p][r][c] = 0;
     patternMoods[p] = 0;
     patternOctaves[p] = 0;
   }
 
   const R = (arr) => arr;
-  const empty = () => Array.from({length:TRACK_COUNT}, () => Array(STEPS).fill(false));
+  const empty = () => Array.from({length:TRACK_COUNT}, () => Array(STEPS).fill(0));
 
   const patterns = [];
 
@@ -3160,7 +3205,7 @@ function initDemoPatterns() {
     const src = patterns[pIdx];
     for (let r = 0; r < TRACK_COUNT; r++)
       for (let c = 0; c < STEPS; c++)
-        patternBank[pIdx][r][c] = !!src[r][c];
+        patternBank[pIdx][r][c] = src[r][c] ? +src[r][c] : 0;
   }
 
   for (let r = 0; r < TRACK_COUNT; r++)
