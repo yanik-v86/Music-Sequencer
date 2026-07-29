@@ -1589,6 +1589,7 @@ function saveCurrentPattern() {
 function loadPattern(idx) {
   saveCurrentPattern();
   currentPatternIdx = idx;
+  saveCurrentPatternToProject();
   const src = patternBank[idx];
   for (let r = 0; r < TRACK_COUNT; r++)
     for (let c = 0; c < STEPS; c++)
@@ -3048,8 +3049,20 @@ function saveProjectToStorage(idx) {
     quantizeStepSize,
     recordedEvents,
     reverbMix, delayMix,
+    currentPattern: currentPatternIdx,
   };
   try { localStorage.setItem(key, JSON.stringify(data)); } catch(_) {}
+}
+
+function saveCurrentPatternToProject() {
+  try {
+    const raw = localStorage.getItem('seq-project-' + currentProjectIdx);
+    if (raw) {
+      const data = JSON.parse(raw);
+      data.currentPattern = currentPatternIdx;
+      localStorage.setItem('seq-project-' + currentProjectIdx, JSON.stringify(data));
+    }
+  } catch(_) {}
 }
 
 function loadProjectFromStorage(idx) {
@@ -3104,6 +3117,7 @@ function loadProjectFromStorage(idx) {
     if (d.reverbMix != null) { reverbMix = d.reverbMix; if (reverbSlider) reverbSlider.value = reverbMix * 100; if (reverbGain && audioCtx) reverbGain.gain.setValueAtTime(reverbMix, audioCtx.currentTime); }
     if (d.delayMix != null) { delayMix = d.delayMix; if (delaySlider) delaySlider.value = delayMix * 100; if (delayGain && audioCtx) delayGain.gain.setValueAtTime(delayMix, audioCtx.currentTime); }
 
+    if (d.currentPattern != null) currentPatternIdx = d.currentPattern;
     loadPattern(currentPatternIdx);
     updatePatNoteIndicators();
     updateVolumeBars();
