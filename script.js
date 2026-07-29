@@ -1911,6 +1911,7 @@ function clearGateDrag() {
   dragCol = null;
   dragEdge = null;
   dragActive = false;
+  dragOccurred = false;
   for (let c = 0; c < STEPS; c++) {
     for (let r = 0; r < TRACK_COUNT; r++) {
       const el = getCellEl(r, c);
