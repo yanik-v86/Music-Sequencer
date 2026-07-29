@@ -2017,11 +2017,11 @@ document.addEventListener('mousemove', (e) => {
   }
   const grid = document.getElementById('grid');
   const gridRect = grid.getBoundingClientRect();
-  const cellWidth = gridRect.width / (STEPS + 1);
+  const cellWidth = (gridRect.width - 170) / STEPS;
   const baseGate = pattern[dragRow][dragCol] || 1;
   if (dragType === 'gate') {
-    const leftEdgeX = gridRect.left + cellWidth + dragCol * cellWidth;
-    const rightEdgeX = gridRect.left + cellWidth + (dragCol + 1) * cellWidth;
+    const leftEdgeX = gridRect.left + 170 + dragCol * cellWidth;
+    const rightEdgeX = gridRect.left + 170 + (dragCol + 1) * cellWidth;
     let startCol, endCol, curGate;
     if (dragEdge === 'left') {
       const offset = e.clientX - leftEdgeX;
@@ -2047,7 +2047,7 @@ document.addEventListener('mousemove', (e) => {
       }
     }
   } else if (dragType === 'move') {
-    const relX = e.clientX - gridRect.left - cellWidth;
+    const relX = e.clientX - gridRect.left - 170;
     const targetCol = Math.max(0, Math.min(STEPS - 1, Math.round(relX / cellWidth)));
     const elUnder = document.elementFromPoint(e.clientX, e.clientY);
     const rowEl = elUnder?.closest?.('[data-track-row]');
@@ -2067,11 +2067,11 @@ document.addEventListener('mouseup', (e) => {
   if (dragOccurred) {
     const grid = document.getElementById('grid');
     const gridRect = grid.getBoundingClientRect();
-    const cellWidth = gridRect.width / (STEPS + 1);
+    const cellWidth = (gridRect.width - 170) / STEPS;
     const baseGate = pattern[dragRow][dragCol] || 1;
     if (dragType === 'gate') {
-      const leftEdgeX = gridRect.left + cellWidth + dragCol * cellWidth;
-      const rightEdgeX = gridRect.left + cellWidth + (dragCol + 1) * cellWidth;
+      const leftEdgeX = gridRect.left + 170 + dragCol * cellWidth;
+      const rightEdgeX = gridRect.left + 170 + (dragCol + 1) * cellWidth;
       let newGate, startCol;
       if (dragEdge === 'left') {
         const offset = e.clientX - leftEdgeX;
@@ -2093,7 +2093,7 @@ document.addEventListener('mouseup', (e) => {
       defaultGate = newGate;
       autoSave();
     } else if (dragType === 'move') {
-      const relX = e.clientX - gridRect.left - cellWidth;
+      const relX = e.clientX - gridRect.left - 170;
       const targetCol = Math.max(0, Math.min(STEPS - 1, Math.round(relX / cellWidth)));
       const elUnder = document.elementFromPoint(e.clientX, e.clientY);
       const rowEl = elUnder?.closest?.('[data-track-row]');
