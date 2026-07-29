@@ -27,6 +27,22 @@
     <div class="sidebar-actions">
       <button class="sidebar-btn" id="newProjectBtn">+ New Project</button>
     </div>
+    <div class="sidebar-section">
+      <div class="sidebar-heading">Samples</div>
+      <div class="sample-browser" id="sampleBrowser">
+        <div class="sample-browser-header">
+          <select id="sampleBankSelect" class="sample-bank-select"></select>
+          <input type="text" id="sampleSearch" class="sample-search" placeholder="Search samples...">
+          <label class="file-input-label">
+            <input type="file" id="sampleFileInput" accept=".wav,.mp3,.ogg,.flac,.aiff" multiple style="display:none">
+            <span class="btn">Load</span>
+          </label>
+        </div>
+        <div class="sample-categories" id="sampleCategories"></div>
+        <div class="sample-list" id="sampleList"></div>
+        <div class="sample-load-status" id="sampleLoadStatus" style="display:none"></div>
+      </div>
+    </div>
     <div class="sidebar-footer">
       <div style="display:flex;align-items:center;gap:8px">
         <a href="https://github.com/yanik-v86/Music-Sequencer" target="_blank" rel="noopener">GitHub</a>
@@ -52,6 +68,9 @@
           <span class="ctrl-divider"></span>
           <label title="Reverb Amount">rev <input type="range" id="reverbSlider" min="0" max="100" value="25"></label>
           <label title="Delay Amount">del <input type="range" id="delaySlider" min="0" max="100" value="15"></label>
+          <span class="ctrl-divider"></span>
+          <label title="Global Glide Time">glide <input type="range" id="glideSlider" min="0" max="1000" value="0" step="10"></label>
+          <span id="glideDisplay" class="status" style="min-width:40px">0ms</span>
         </div>
       </header>
 
@@ -146,6 +165,8 @@
 
 <div class="context-menu" id="ctxMenu"></div>
 
-  <script src="script.js"></script>
+  <script src="sample-engine.js"></script>
+<script src="sample-browser.js"></script>
+<script src="script.js"></script>
 </body>
 </html>

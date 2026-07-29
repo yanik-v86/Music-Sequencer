@@ -66,11 +66,14 @@ let pattern = Array.from({length:TRACK_COUNT}, () => Array(STEPS).fill(0));
 let muted = new Array(TRACK_COUNT).fill(false);
 let trackOverrides = new Array(TRACK_COUNT).fill(null);
 let trackVolumes = new Array(TRACK_COUNT).fill(1.0);
+let trackGlide = new Array(TRACK_COUNT).fill(0); // 0 = off, >0 = glide time in seconds
+let lastPlayedNote = new Array(TRACK_COUNT).fill(null); // for glide/portamento
 let sectionMuted = { melody: false, bass: false, percussion: false };
 let patternBank = [];
 let patternTrackVolumes = [];
 let patternMoods = new Array(MAX_PATTERNS).fill(0);
 let patternOctaves = new Array(MAX_PATTERNS).fill(0);
+let patternGlides = new Array(MAX_PATTERNS).fill(0); // per-pattern glide in seconds
 let patternBorders = new Array(MAX_PATTERNS).fill(null);
 let currentPatternIdx = 0;
 let defaultGate = 1;
@@ -151,6 +154,16 @@ function freqForMood(track, mood, octave) {
   const semi = intervals[track.freqIdx];
   const o = (track.type === 'bass' ? -12 : 0) + octave * 12;
   return ROOT_FREQ * Math.pow(2, (semi + o) / 12);
+}
+
+function noteForTrack(track, mood, octave) {
+  if (octave == null) octave = octaveShift;
+  if (track.type === 'melody') {
+    return 60 + track.freqIdx + octave * 12; // C4 = 60
+  }
+  const intervals = SCALES[mood.scale];
+  const semi = intervals[track.freqIdx];
+  return 60 + (track.type === 'bass' ? -12 : 0) + semi + octave * 12;
 }
 
 function getAudioDest() {
@@ -270,6 +283,15 @@ function initAudio() {
     
     initEffects();
     
+    // Initialize SampleEngine
+    if (window.SampleEngine) {
+      SampleEngine.init(audioCtx, masterGain);
+      // Generate factory samples on first run
+      if (SampleEngine.loadedCount === 0) {
+        SampleEngine.generateFactoryBanks();
+      }
+    }
+    
     visualizerCanvas = document.getElementById('visualizer');
     if (visualizerCanvas) {
       visualizerCtx = visualizerCanvas.getContext('2d');
@@ -279,7 +301,7 @@ function initAudio() {
   if (audioCtx.state === 'suspended') audioCtx.resume();
 }
 
-function playPluckString(freq, time, dur, vol, isBass = false) {
+function playPluckString(freq, time, dur, vol, isBass = false, glideTime = 0, startFreq = null) {
   const period = 1 / freq;
   const size = Math.max(isBass ? 256 : 128, Math.ceil(audioCtx.sampleRate * period));
   const buffer = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
@@ -292,7 +314,11 @@ function playPluckString(freq, time, dur, vol, isBass = false) {
   noise.buffer = buffer;
   
   const delay = audioCtx.createDelay(1.0);
-  delay.delayTime.setValueAtTime(period, time);
+  const startPeriod = startFreq ? 1 / startFreq : period;
+  delay.delayTime.setValueAtTime(startPeriod, time);
+  if (glideTime > 0 && startFreq && startFreq !== freq) {
+    delay.delayTime.exponentialRampToValueAtTime(period, time + glideTime);
+  }
   
   const feedback = audioCtx.createGain();
   const decayRate = isBass ? 0.985 : Math.min(0.995, Math.exp(-0.0006 * freq));
@@ -302,7 +328,11 @@ function playPluckString(freq, time, dur, vol, isBass = false) {
   
   const filter = audioCtx.createBiquadFilter();
   filter.type = 'lowpass';
-  filter.frequency.setValueAtTime(isBass ? freq * 1.5 : Math.min(10000, freq * 7), time);
+  const startFilterFreq = isBass ? (startFreq ? startFreq * 1.5 : freq * 1.5) : Math.min(10000, (startFreq || freq) * 7);
+  filter.frequency.setValueAtTime(startFilterFreq, time);
+  if (glideTime > 0 && startFreq && startFreq !== freq) {
+    filter.frequency.exponentialRampToValueAtTime(isBass ? freq * 1.5 : Math.min(10000, freq * 7), time + glideTime);
+  }
   filter.Q.value = 0.5;
   
   delay.connect(filter);
@@ -327,7 +357,10 @@ function playPluckString(freq, time, dur, vol, isBass = false) {
     const sub = audioCtx.createOscillator();
     const subEnv = audioCtx.createGain();
     sub.type = 'sine';
-    sub.frequency.setValueAtTime(freq, time);
+    sub.frequency.setValueAtTime(startFreq || freq, time);
+    if (glideTime > 0 && startFreq && startFreq !== freq) {
+      sub.frequency.exponentialRampToValueAtTime(freq, time + glideTime);
+    }
     subEnv.gain.setValueAtTime(0, time);
     subEnv.gain.linearRampToValueAtTime(vol * 0.45, time + 0.01);
     subEnv.gain.exponentialRampToValueAtTime(0.001, time + dur);
@@ -339,18 +372,25 @@ function playPluckString(freq, time, dur, vol, isBass = false) {
   }
 }
 
-function playFMPiano(freq, time, dur, vol) {
+function playFMPiano(freq, time, dur, vol, glideTime = 0, startFreq = null) {
   const carrier = audioCtx.createOscillator();
   const modulator = audioCtx.createOscillator();
   const modGain = audioCtx.createGain();
   const env = audioCtx.createGain();
   
   carrier.type = 'sine';
-  carrier.frequency.setValueAtTime(freq, time);
+  carrier.frequency.setValueAtTime(startFreq || freq, time);
+  if (glideTime > 0 && startFreq && startFreq !== freq) {
+    carrier.frequency.exponentialRampToValueAtTime(freq, time + glideTime);
+  }
   
   modulator.type = 'sine';
   const ratio = 2;
-  modulator.frequency.setValueAtTime(freq * ratio, time);
+  const startModFreq = (startFreq || freq) * ratio;
+  modulator.frequency.setValueAtTime(startModFreq, time);
+  if (glideTime > 0 && startFreq && startFreq !== freq) {
+    modulator.frequency.exponentialRampToValueAtTime(freq * ratio, time + glideTime);
+  }
   
   const modFreq = freq * ratio;
   const modIndex = 4.5;
@@ -362,7 +402,7 @@ function playFMPiano(freq, time, dur, vol) {
   
   env.gain.setValueAtTime(0, time);
   env.gain.linearRampToValueAtTime(vol * 0.35, time + 0.005);
-  env.gain.exponentialRampToValueAtTime(vol * 0.12, time + dur * 0.3);
+  env.gain.exponentialRampToValueAtTime(Math.max(vol * 0.12, 0.001), time + dur * 0.3);
   env.gain.linearRampToValueAtTime(0, time + dur);
   
   modulator.connect(modGain);
@@ -376,7 +416,7 @@ function playFMPiano(freq, time, dur, vol) {
   modulator.stop(time + dur);
 }
 
-function playSynthLead(freq, time, dur, waveType, filterFreq, vol) {
+function playSynthLead(freq, time, dur, waveType, filterFreq, vol, glideTime = 0, startFreq = null) {
   const osc1 = audioCtx.createOscillator();
   const osc2 = audioCtx.createOscillator();
   const oscGain1 = audioCtx.createGain();
@@ -385,12 +425,18 @@ function playSynthLead(freq, time, dur, waveType, filterFreq, vol) {
   const filter = audioCtx.createBiquadFilter();
   
   osc1.type = waveType;
-  osc1.frequency.setValueAtTime(freq, time);
+  osc1.frequency.setValueAtTime(startFreq || freq, time);
   osc1.detune.setValueAtTime(-14, time);
+  if (glideTime > 0 && startFreq && startFreq !== freq) {
+    osc1.frequency.exponentialRampToValueAtTime(freq, time + glideTime);
+  }
   
   osc2.type = waveType;
-  osc2.frequency.setValueAtTime(freq, time);
+  osc2.frequency.setValueAtTime(startFreq || freq, time);
   osc2.detune.setValueAtTime(14, time);
+  if (glideTime > 0 && startFreq && startFreq !== freq) {
+    osc2.frequency.exponentialRampToValueAtTime(freq, time + glideTime);
+  }
   
   env.gain.setValueAtTime(0, time);
   env.gain.linearRampToValueAtTime(vol * 0.22, time + 0.01);
@@ -418,7 +464,7 @@ function playSynthLead(freq, time, dur, waveType, filterFreq, vol) {
   osc2.stop(time + dur);
 }
 
-function playOrgan(freq, time, dur, vol) {
+function playOrgan(freq, time, dur, vol, glideTime = 0, startFreq = null) {
   const env = audioCtx.createGain();
   const harmonics = [1, 2, 3, 4];
   const relativeGains = [1.0, 0.5, 0.35, 0.18];
@@ -426,7 +472,10 @@ function playOrgan(freq, time, dur, vol) {
   harmonics.forEach((h, index) => {
     const osc = audioCtx.createOscillator();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(freq * h, time);
+    osc.frequency.setValueAtTime((startFreq || freq) * h, time);
+    if (glideTime > 0 && startFreq && startFreq !== freq) {
+      osc.frequency.exponentialRampToValueAtTime(freq * h, time + glideTime);
+    }
     
     const g = audioCtx.createGain();
     g.gain.setValueAtTime(relativeGains[index] * 0.25, time);
@@ -446,13 +495,17 @@ function playOrgan(freq, time, dur, vol) {
   env.connect(getAudioDest());
 }
 
-function playSubBass(freq, time, dur, vol) {
+function playSubBass(freq, time, dur, vol, glideTime = 0, startFreq = null) {
   const osc = audioCtx.createOscillator();
   const env = audioCtx.createGain();
   
   osc.type = 'sine';
-  osc.frequency.setValueAtTime(freq * 1.5, time);
+  osc.frequency.setValueAtTime((startFreq || freq) * 1.5, time);
   osc.frequency.exponentialRampToValueAtTime(freq, time + 0.022);
+  if (glideTime > 0 && startFreq && startFreq !== freq) {
+    osc.frequency.exponentialRampToValueAtTime(freq * 1.5, time);
+    osc.frequency.exponentialRampToValueAtTime(freq, time + Math.max(0.022, glideTime));
+  }
   
   env.gain.setValueAtTime(0, time);
   env.gain.linearRampToValueAtTime(vol * 0.65, time + 0.008);
@@ -466,13 +519,16 @@ function playSubBass(freq, time, dur, vol) {
   osc.stop(time + dur);
 }
 
-function playAcidBass(freq, time, dur, vol) {
+function playAcidBass(freq, time, dur, vol, glideTime = 0, startFreq = null) {
   const osc = audioCtx.createOscillator();
   const env = audioCtx.createGain();
   const filter = audioCtx.createBiquadFilter();
   
   osc.type = 'sawtooth';
-  osc.frequency.setValueAtTime(freq, time);
+  osc.frequency.setValueAtTime(startFreq || freq, time);
+  if (glideTime > 0 && startFreq && startFreq !== freq) {
+    osc.frequency.exponentialRampToValueAtTime(freq, time + glideTime);
+  }
   
   filter.type = 'lowpass';
   filter.Q.setValueAtTime(10.0, time);
@@ -481,7 +537,7 @@ function playAcidBass(freq, time, dur, vol) {
   
   env.gain.setValueAtTime(0, time);
   env.gain.linearRampToValueAtTime(vol * 0.32, time + 0.006);
-  env.gain.exponentialRampToValueAtTime(vol * 0.12, time + dur * 0.65);
+  env.gain.exponentialRampToValueAtTime(Math.max(vol * 0.12, 0.001), time + dur * 0.65);
   env.gain.linearRampToValueAtTime(0, time + dur);
   
   osc.connect(filter);
@@ -492,17 +548,20 @@ function playAcidBass(freq, time, dur, vol) {
   osc.stop(time + dur);
 }
 
-function playSquareBass(freq, time, dur, vol) {
+function playSquareBass(freq, time, dur, vol, glideTime = 0, startFreq = null) {
   const osc = audioCtx.createOscillator();
   const env = audioCtx.createGain();
   const filter = audioCtx.createBiquadFilter();
   
   osc.type = 'square';
-  osc.frequency.setValueAtTime(freq, time);
+  osc.frequency.setValueAtTime(startFreq || freq, time);
+  if (glideTime > 0 && startFreq && startFreq !== freq) {
+    osc.frequency.exponentialRampToValueAtTime(freq, time + glideTime);
+  }
   
   filter.type = 'lowpass';
   filter.Q.setValueAtTime(1.8, time);
-  filter.frequency.setValueAtTime(freq * 3.5, time);
+  filter.frequency.setValueAtTime((startFreq || freq) * 3.5, time);
   filter.frequency.exponentialRampToValueAtTime(freq * 1.1, time + dur * 0.4);
   
   env.gain.setValueAtTime(0, time);
@@ -518,34 +577,34 @@ function playSquareBass(freq, time, dur, vol) {
   osc.stop(time + dur);
 }
 
-function playTone(freq, time, dur, waveType, filterFreq, vol, trackType = 'melody') {
+function playTone(freq, time, dur, waveType, filterFreq, vol, trackType = 'melody', glideTime = 0, startFreq = null) {
   const v = vol != null ? vol : 0.25;
   if (trackType === 'melody') {
     if (waveType === 'sine') {
-      playFMPiano(freq, time, dur, v);
+      playFMPiano(freq, time, dur, v, glideTime, startFreq);
     } else if (waveType === 'triangle') {
-      playPluckString(freq, time, dur, v, false);
+      playPluckString(freq, time, dur, v, false, glideTime, startFreq);
     } else if (waveType === 'sawtooth') {
-      playSynthLead(freq, time, dur, 'sawtooth', filterFreq, v);
+      playSynthLead(freq, time, dur, 'sawtooth', filterFreq, v, glideTime, startFreq);
     } else if (waveType === 'square') {
-      playOrgan(freq, time, dur, v);
+      playOrgan(freq, time, dur, v, glideTime, startFreq);
     } else {
-      playSynthLead(freq, time, dur, waveType, filterFreq, v);
+      playSynthLead(freq, time, dur, waveType, filterFreq, v, glideTime, startFreq);
     }
   } else if (trackType === 'bass') {
     if (waveType === 'sine') {
-      playSubBass(freq, time, dur, v);
+      playSubBass(freq, time, dur, v, glideTime, startFreq);
     } else if (waveType === 'triangle') {
-      playPluckString(freq, time, dur, v, true);
+      playPluckString(freq, time, dur, v, true, glideTime, startFreq);
     } else if (waveType === 'sawtooth') {
-      playAcidBass(freq, time, dur, v);
+      playAcidBass(freq, time, dur, v, glideTime, startFreq);
     } else if (waveType === 'square') {
-      playSquareBass(freq, time, dur, v);
+      playSquareBass(freq, time, dur, v, glideTime, startFreq);
     } else {
-      playSubBass(freq, time, dur, v);
+      playSubBass(freq, time, dur, v, glideTime, startFreq);
     }
   } else {
-    playFMPiano(freq, time, dur, v);
+    playFMPiano(freq, time, dur, v, glideTime, startFreq);
   }
 }
 
@@ -1066,7 +1125,14 @@ function previewCell(r, c) {
   const track = TRACKS[r];
   const stepDuration = 60 / bpm / 4;
   const trkVol = trackVolumes[r];
-  if (track.type === 'perc') {
+  
+  // Check if track has a sample assigned
+  const sampleAssignment = window.SampleEngine ? SampleEngine.getTrackSample(r) : null;
+  
+  if (sampleAssignment) {
+    const note = track.type === 'perc' ? null : noteForTrack(track, currentMood, octaveShift);
+    SampleEngine.playTrack(r, audioCtx.currentTime, note || { velocity: 1, gain: trkVol });
+  } else if (track.type === 'perc') {
     const sound = trackOverrides[r] || track.sound;
     playPerc(sound, audioCtx.currentTime, stepDuration * 0.85, trkVol);
   } else {
@@ -1113,48 +1179,73 @@ function schedule() {
       if (!playPattern[r][scheduleStep] || isTrackMuted(r)) continue;
       const track = TRACKS[r];
       const trkVol = getPlayTrackVolumes()[r];
-      if (track.type === 'perc') {
-        const sound = getPlayTrackOverrides()[r] || track.sound;
-        playPerc(sound, t, stepDuration * 0.85, trkVol);
-        // Record if recording
+      
+      // Check if track has a sample assigned
+      const sampleAssignment = window.SampleEngine ? SampleEngine.getTrackSample(r) : null;
+      
+      if (sampleAssignment) {
+        // Use SampleEngine for playback
+        const note = track.type === 'perc' ? null : noteForTrack(track, getPlayMood(), getPlayOctave());
+        
+        // Handle glide for sample engine
+        const glideTime = trackGlide[r] || 0;
+        const prevNote = lastPlayedNote[r];
+        const playOptions = { velocity: 1, gain: trkVol };
+        if (glideTime > 0 && prevNote !== null && note !== null && note !== prevNote) {
+          SampleEngine.playTrack(r, t, { note, glideTime, startNote: prevNote }, playOptions);
+        } else {
+          SampleEngine.playTrack(r, t, note || {}, playOptions);
+        }
+        if (note !== null) lastPlayedNote[r] = note;
+        
         if (isRecording) {
           const relTime = t - recordStartTime;
           recordedEvents.push({
-            track: r,
-            time: relTime,
-            type: 'perc',
-            sound: sound,
-            vol: trkVol,
-            dur: stepDuration * 0.85
+            track: r, time: relTime, type: track.type, sampleId: sampleAssignment.sampleId, note: note, vol: trkVol, dur: stepDuration * 0.85
           });
-          // Track this track for timeline grid
+          if (!timelineTracks.has(r)) {
+            timelineTracks.set(r, { row: timelineTracks.size, name: track.name, type: track.type, sampleId: sampleAssignment.sampleId });
+          }
+        }
+      } else if (track.type === 'perc') {
+        const sound = getPlayTrackOverrides()[r] || track.sound;
+        playPerc(sound, t, stepDuration * 0.85, trkVol);
+        if (isRecording) {
+          const relTime = t - recordStartTime;
+          recordedEvents.push({ track: r, time: relTime, type: 'perc', sound: sound, vol: trkVol, dur: stepDuration * 0.85 });
           if (!timelineTracks.has(r)) {
             timelineTracks.set(r, { row: timelineTracks.size, name: track.name, type: 'perc', sound: sound });
           }
         }
       } else {
+        // Fallback to synthesis for tonal tracks
         const freq = freqForMood(track, getPlayMood(), getPlayOctave());
         const wave = getPlayTrackOverrides()[r] || getPlayMood().wave;
         const filter = getPlayMood().filter;
         const baseVol = (track.type === 'bass' ? 0.35 : 0.28) * trkVol;
         const gate = track.type === 'melody' ? playPattern[r][scheduleStep] : 1;
         const dur = stepDuration * gate * 0.85;
-        playTone(freq, t, dur, wave, filter, baseVol, track.type);
-        // Record if recording
+        
+        // Handle glide
+        const glideTime = trackGlide[r] || 0;
+        const prevNote = lastPlayedNote[r];
+        const currentNote = noteForTrack(track, getPlayMood(), getPlayOctave());
+        const startFreq = (glideTime > 0 && prevNote !== null && currentNote !== prevNote) 
+          ? freqForMood(track, getPlayMood(), getPlayOctave()) // This needs prev mood/octave - simplify
+          : null;
+        
+        // Simpler: pass the previous frequency
+        const prevFreq = prevNote !== null ? freqForMood(track, getPlayMood(), getPlayOctave()) : null; // approximation
+        if (glideTime > 0 && prevNote !== null && currentNote !== prevNote) {
+          playTone(freq, t, dur, wave, filter, baseVol, track.type, glideTime, prevFreq);
+        } else {
+          playTone(freq, t, dur, wave, filter, baseVol, track.type);
+        }
+        lastPlayedNote[r] = currentNote;
+        
         if (isRecording) {
           const relTime = t - recordStartTime;
-          recordedEvents.push({
-            track: r,
-            time: relTime,
-            type: track.type,
-            freq: freq,
-            wave: wave,
-            filter: filter,
-            vol: baseVol,
-            dur: dur,
-            mood: getPlayMood().id,
-            octave: getPlayOctave()
-          });
+          recordedEvents.push({ track: r, time: relTime, type: track.type, freq: freq, wave: wave, filter: filter, vol: baseVol, dur: dur, mood: getPlayMood().id, octave: getPlayOctave() });
           if (!timelineTracks.has(r)) {
             timelineTracks.set(r, { row: timelineTracks.size, name: track.name, type: track.type });
           }
@@ -1584,6 +1675,13 @@ function saveCurrentPattern() {
       patternBank[currentPatternIdx][r][c] = pattern[r][c];
   patternMoods[currentPatternIdx] = parseInt(moodSelect.value);
   patternOctaves[currentPatternIdx] = octaveShift;
+  // Save pattern glide (use first tonal track's glide as pattern glide)
+  for (let r = 0; r < TRACK_COUNT; r++) {
+    if (TRACKS[r].type !== 'perc' && trackGlide[r] > 0) {
+      patternGlides[currentPatternIdx] = trackGlide[r];
+      break;
+    }
+  }
 }
 
 function loadPattern(idx, skipSave = false) {
@@ -1602,6 +1700,16 @@ function loadPattern(idx, skipSave = false) {
   applyMood(MOODS[patternMoods[idx]]);
   octaveShift = patternOctaves[idx];
   updateOctaveDisplay();
+  // Load pattern glide
+  if (patternGlides[idx] !== undefined) {
+    for (let r = 0; r < TRACK_COUNT; r++) {
+      if (TRACKS[r].type !== 'perc' && trackGlide[r] > 0) {
+        trackGlide[r] = patternGlides[idx];
+      }
+    }
+    glideSlider.value = Math.round(patternGlides[idx] * 1000);
+    glideDisplay.textContent = Math.round(patternGlides[idx] * 1000) + 'ms';
+  }
   updatePatButtons();
   updatePatNoteIndicators();
   updateVolumeBars();
@@ -1846,19 +1954,25 @@ const BASS_NAMES = {
 
 function trackSoundLabel(r) {
   const track = TRACKS[r];
+  let label = '';
   if (track.type === 'perc') {
     const s = trackOverrides[r] || track.sound;
-    return s.charAt(0).toUpperCase() + s.slice(1);
-  }
-  if (track.type === 'bass') {
+    label = s.charAt(0).toUpperCase() + s.slice(1);
+  } else if (track.type === 'bass') {
     const w = trackOverrides[r];
-    return w ? (BASS_NAMES[w] || w) : 'mood';
-  }
-  if (track.type === 'melody') {
+    label = w ? (BASS_NAMES[w] || w) : 'mood';
+  } else if (track.type === 'melody') {
     const w = trackOverrides[r];
-    return w ? (INSTRUMENT_NAMES[w] || w) : 'mood';
+    label = w ? (INSTRUMENT_NAMES[w] || w) : 'mood';
   }
-  return '';
+  
+  // Add glide indicator
+  const glide = trackGlide[r];
+  if (glide > 0) {
+    label += ` 🎵${glide}s`;
+  }
+  
+  return label;
 }
 function updateTrackSoundLabel(r) {
   const el = document.querySelector(`.track-sound[data-track-row="${r}"]`);
@@ -2006,6 +2120,40 @@ ctxMenu.addEventListener('click', (e) => {
   } else {
     const row = parseInt(ctxMenu.dataset.trackRow);
     if (isNaN(row)) { ctxMenu.classList.remove('open'); return; }
+    
+    // Handle sample browser actions
+    if (val === 'load-sample') {
+      ctxMenu.classList.remove('open');
+      // Open sample browser modal or focus sidebar
+      window.lastContextTrackId = row;
+      if (SampleBrowser) {
+        // Scroll to sample browser in sidebar
+        const browser = document.getElementById('sampleBrowser');
+        if (browser) browser.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+      return;
+    }
+    if (val === 'clear-sample') {
+      if (SampleEngine && SampleEngine.clearTrackSample) {
+        SampleEngine.clearTrackSample(row);
+        updateTrackSoundLabel(row);
+        updateCell(row, 0);
+        autoSave();
+      }
+      ctxMenu.classList.remove('open');
+      return;
+    }
+    // Handle glide
+    if (val.startsWith('glide-')) {
+      const glideTime = parseFloat(val.replace('glide-', ''));
+      trackGlide[row] = glideTime;
+      // Update UI indicator if needed
+      updateTrackSoundLabel(row);
+      autoSave();
+      ctxMenu.classList.remove('open');
+      return;
+    }
+    
     trackOverrides[row] = val === '' ? null : val;
     updateTrackSoundLabel(row);
     updateCell(row, 0);
@@ -2140,6 +2288,7 @@ function showCtxMenu(r, x, y) {
   const track = TRACKS[r];
   let options = [];
   const current = trackOverrides[r] || '';
+  const hasSample = SampleEngine && SampleEngine.getTrackSample && SampleEngine.getTrackSample(r);
   if (track.type === 'perc') {
     options = [{ label: 'Default (' + track.sound + ')', value: '' }];
     PERC_SOUNDS.forEach(s => {
@@ -2162,8 +2311,31 @@ function showCtxMenu(r, x, y) {
       { label: 'Drawbar Organ', value: 'square' }
     ];
   } else { ctxMenu.classList.remove('open'); return; }
+  
+  // Add sample browser option
+  options.push({ label: '—', value: 'divider' });
+  options.push({ label: '🎵 Load Sample...', value: 'load-sample' });
+  if (hasSample) {
+    options.push({ label: '🗑 Clear Sample', value: 'clear-sample' });
+  }
+  
+  // Add glide/portamento options for tonal tracks
+  if (track.type !== 'perc') {
+    const currentGlide = trackGlide[r] || 0;
+    options.push({ label: '—', value: 'divider' });
+    options.push({ label: 'Glide: Off', value: 'glide-0' });
+    options.push({ label: 'Glide: 50ms', value: 'glide-0.05' });
+    options.push({ label: 'Glide: 100ms', value: 'glide-0.1' });
+    options.push({ label: 'Glide: 200ms', value: 'glide-0.2' });
+    options.push({ label: 'Glide: 500ms', value: 'glide-0.5' });
+  }
+  
   let html = '<div class="context-menu-header">' + (track.type === 'perc' ? 'Percussion' : 'Instrument') + '</div>';
   options.forEach(o => {
+    if (o.value === 'divider') {
+      html += '<div class="context-menu-divider" style="height:1px;background:var(--glass-border);margin:4px 0"></div>';
+      return;
+    }
     const active = o.value === current ? ' is-active' : '';
     html += '<div class="context-menu-item' + active + '" data-value="' + o.value + '">' + o.label + '</div>';
   });
@@ -2611,6 +2783,29 @@ delaySlider.addEventListener('input', () => {
 });
 delaySlider.addEventListener('input', autoSave);
 
+const glideSlider = document.getElementById('glideSlider');
+const glideDisplay = document.getElementById('glideDisplay');
+let globalGlide = 0;
+
+glideSlider.addEventListener('input', () => {
+  globalGlide = parseInt(glideSlider.value);
+  glideDisplay.textContent = globalGlide + 'ms';
+  // Apply to all tonal tracks that have glide enabled
+  for (let r = 0; r < TRACK_COUNT; r++) {
+    if (TRACKS[r].type !== 'perc' && trackGlide[r] > 0) {
+      trackGlide[r] = globalGlide / 1000; // convert to seconds
+    }
+  }
+  // Update pattern glide if any tonal track has glide
+  for (let r = 0; r < TRACK_COUNT; r++) {
+    if (TRACKS[r].type !== 'perc' && trackGlide[r] > 0) {
+      patternGlides[currentPatternIdx] = trackGlide[r];
+      break;
+    }
+  }
+  autoSave();
+});
+
 let copyTarget = -1;
 copyBtn.addEventListener('click', () => {
   copyTarget = (currentPatternIdx + 1) % MAX_PATTERNS;
@@ -2813,6 +3008,7 @@ function saveState() {
       sectionMuted,
       octaveShift,
       trackOverrides: trackOverrides.map(v => v || null),
+      trackGlide: trackGlide.map(v => v || 0),
       previewEnabled,
       metronomeEnabled, metronomeVolume,
       quantizeStepSize,
@@ -2877,6 +3073,11 @@ function loadState() {
     if (data.trackOverrides) {
       for (let r = 0; r < Math.min(TRACK_COUNT, data.trackOverrides.length); r++)
         trackOverrides[r] = data.trackOverrides[r] || null;
+    }
+
+    if (data.trackGlide) {
+      for (let r = 0; r < Math.min(TRACK_COUNT, data.trackGlide.length); r++)
+        trackGlide[r] = data.trackGlide[r];
     }
 
     if (data.patternTrackVolumes) {
@@ -3033,6 +3234,12 @@ function esc(s) { const d = document.createElement('div'); d.textContent = s; re
 function saveProjectToStorage(idx) {
   saveCurrentPattern();
   const key = 'seq-project-' + idx;
+  const trackSamplesData = {};
+  if (SampleEngine && SampleEngine.trackSamples) {
+    for (const [trackId, assignment] of SampleEngine.trackSamples) {
+      trackSamplesData[trackId] = assignment;
+    }
+  }
   const data = {
     patternBank: patternBank.map(p => p.map(r => r.map(c => c))),
     patternTrackVolumes: patternTrackVolumes.map(v => Array.from(v)),
@@ -3041,9 +3248,12 @@ function saveProjectToStorage(idx) {
     bpm, volume,
     muted: Array.from(muted),
     trackVolumes: Array.from(trackVolumes),
+    trackGlide: Array.from(trackGlide),
+    patternGlides: [...patternGlides],
     sectionMuted: {...sectionMuted},
     octaveShift,
     trackOverrides: trackOverrides.map(v => v || null),
+    trackSamples: trackSamplesData,
     previewEnabled,
     metronomeEnabled, metronomeVolume,
     quantizeStepSize,
@@ -3100,6 +3310,8 @@ function loadProjectFromStorage(idx) {
       }
     }
     if (d.trackVolumes) for (let r = 0; r < Math.min(TRACK_COUNT, d.trackVolumes.length); r++) trackVolumes[r] = d.trackVolumes[r];
+    if (d.trackGlide) for (let r = 0; r < Math.min(TRACK_COUNT, d.trackGlide.length); r++) trackGlide[r] = d.trackGlide[r];
+    if (d.patternGlides) patternGlides = d.patternGlides.map(v => v || 0);
     if (d.patternTrackVolumes) {
       for (let p = 0; p < Math.min(MAX_PATTERNS, d.patternTrackVolumes.length); p++)
         for (let r = 0; r < Math.min(TRACK_COUNT, d.patternTrackVolumes[p].length); r++)
@@ -3116,6 +3328,16 @@ function loadProjectFromStorage(idx) {
     }
     if (d.reverbMix != null) { reverbMix = d.reverbMix; if (reverbSlider) reverbSlider.value = reverbMix * 100; if (reverbGain && audioCtx) reverbGain.gain.setValueAtTime(reverbMix, audioCtx.currentTime); }
     if (d.delayMix != null) { delayMix = d.delayMix; if (delaySlider) delaySlider.value = delayMix * 100; if (delayGain && audioCtx) delayGain.gain.setValueAtTime(delayMix, audioCtx.currentTime); }
+
+    // Restore track sample assignments
+    if (d.trackSamples && SampleEngine) {
+      for (const [trackId, assignment] of Object.entries(d.trackSamples)) {
+        const tid = parseInt(trackId);
+        if (!isNaN(tid) && tid < TRACK_COUNT) {
+          SampleEngine.assignSampleToTrack(tid, assignment.sampleId, assignment);
+        }
+      }
+    }
 
     if (d.currentPattern != null) currentPatternIdx = d.currentPattern;
     loadPattern(currentPatternIdx, true);
@@ -3483,5 +3705,13 @@ updateVolumeBars();
 buildTimelineGrid();
 updateQuantGrid();
 updateTimelineGridForQuant();
+
+// Initialize SampleBrowser
+if (window.SampleBrowser) {
+  SampleBrowser.init();
+}
+
+// Initialize audio context and SampleEngine on load (needed for file loading)
+initAudio();
 
 console.log('✦ Sequencer ready — click Play or press Space');
