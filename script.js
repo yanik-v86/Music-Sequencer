@@ -2955,14 +2955,25 @@ function initProjects() {
     const raw = localStorage.getItem(PROJECTS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) { projects = parsed; return; }
+      if (Array.isArray(parsed)) {
+        // Legacy format: just an array of projects
+        projects = parsed;
+      } else if (parsed && Array.isArray(parsed.projects)) {
+        // New format: { projects, currentProjectIdx }
+        projects = parsed.projects;
+        if (typeof parsed.currentProjectIdx === 'number') {
+          currentProjectIdx = parsed.currentProjectIdx;
+        }
+      }
+      return;
     }
   } catch(_) {}
   projects = [{ name: 'Default' }];
+  currentProjectIdx = 0;
 }
 
 function saveProjectList() {
-  try { localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects)); } catch(_) {}
+  try { localStorage.setItem(PROJECTS_KEY, JSON.stringify({ projects, currentProjectIdx })); } catch(_) {}
 }
 
 function renderProjectList() {
