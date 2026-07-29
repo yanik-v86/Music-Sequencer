@@ -1586,10 +1586,10 @@ function saveCurrentPattern() {
   patternOctaves[currentPatternIdx] = octaveShift;
 }
 
-function loadPattern(idx) {
-  saveCurrentPattern();
+function loadPattern(idx, skipSave = false) {
+  if (!skipSave) saveCurrentPattern();
   currentPatternIdx = idx;
-  saveCurrentPatternToProject();
+  if (!skipSave) saveCurrentPatternToProject();
   const src = patternBank[idx];
   for (let r = 0; r < TRACK_COUNT; r++)
     for (let c = 0; c < STEPS; c++)
@@ -3118,7 +3118,7 @@ function loadProjectFromStorage(idx) {
     if (d.delayMix != null) { delayMix = d.delayMix; if (delaySlider) delaySlider.value = delayMix * 100; if (delayGain && audioCtx) delayGain.gain.setValueAtTime(delayMix, audioCtx.currentTime); }
 
     if (d.currentPattern != null) currentPatternIdx = d.currentPattern;
-    loadPattern(currentPatternIdx);
+    loadPattern(currentPatternIdx, true);
     updatePatNoteIndicators();
     updateVolumeBars();
 
