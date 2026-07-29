@@ -74,7 +74,7 @@ let patternOctaves = new Array(MAX_PATTERNS).fill(0);
 let patternBorders = new Array(MAX_PATTERNS).fill(null);
 let currentPatternIdx = 0;
 let defaultGate = 1;
-let dragRow = null, dragCol = null, dragStartX = 0, dragActive = false, dragOccurred = false, dragEdge = null, dragType = null;
+let dragRow = null, dragCol = null, dragEndCol = null, dragStartX = 0, dragActive = false, dragOccurred = false, dragEdge = null, dragType = null;
 let overdubMode = false;
 let previewEnabled = true;
 let metronomeEnabled = false;
@@ -1774,6 +1774,7 @@ cell.addEventListener('mousedown', (e) => {
       const g = pattern[r][s];
       if (g > 0 && s + g > c) {
         startGateDrag(r, s, e.clientX, 'right');
+        dragEndCol = c;
         return;
       }
     }
@@ -1925,6 +1926,7 @@ function startMoveDrag(row, col, clientX) {
 function clearGateDrag() {
   dragRow = null;
   dragCol = null;
+  dragEndCol = null;
   dragEdge = null;
   dragType = null;
   dragActive = false;
@@ -2030,7 +2032,6 @@ document.addEventListener('mousemove', (e) => {
   const baseGate = pattern[dragRow][dragCol] || 1;
   if (dragType === 'gate') {
     const leftEdgeX = gridRect.left + 170 + dragCol * cellWidth;
-    const rightEdgeX = gridRect.left + 170 + (dragCol + 1) * cellWidth;
     let startCol, endCol, curGate;
     if (dragEdge === 'left') {
       const offset = e.clientX - leftEdgeX;
@@ -2045,8 +2046,10 @@ document.addEventListener('mousemove', (e) => {
         const label = el.querySelector('.gate-label');
         if (label) label.textContent = String(curGate);
       }
+      if (curGate !== baseGate) dragOccurred = true;
     } else {
-      const offset = e.clientX - rightEdgeX;
+      const endRightEdgeX = gridRect.left + 170 + (dragEndCol + 1) * cellWidth;
+      const offset = e.clientX - endRightEdgeX;
       const extraSteps = Math.ceil(offset / cellWidth - 0.5);
       curGate = Math.max(1, Math.min(16, baseGate + extraSteps));
       for (let c = dragCol; c < dragCol + curGate && c < STEPS; c++) {
@@ -2056,10 +2059,11 @@ document.addEventListener('mousemove', (e) => {
         const label = el.querySelector('.gate-label');
         if (label) label.textContent = String(curGate);
       }
+      if (curGate !== baseGate) dragOccurred = true;
     }
   } else if (dragType === 'move') {
     const relX = e.clientX - gridRect.left - 170;
-    const targetCol = Math.max(0, Math.min(STEPS - 1, Math.round(relX / cellWidth)));
+    const targetCol = Math.max(0, Math.min(STEPS - 1, Math.floor(relX / cellWidth)));
     const elUnder = document.elementFromPoint(e.clientX, e.clientY);
     const rowEl = elUnder?.closest?.('[data-track-row]');
     const rawRow = rowEl ? parseInt(rowEl.dataset.trackRow) : dragRow;
@@ -2069,8 +2073,8 @@ document.addEventListener('mousemove', (e) => {
       getCellEl(dragRow, c).classList.add('drag-ghost');
     }
     getCellEl(targetRow, targetCol).classList.add('drag-target');
+    if (targetCol !== dragCol || targetRow !== dragRow) dragOccurred = true;
   }
-  if (Math.abs(e.clientX - dragStartX) > 5) dragOccurred = true;
 });
 
 document.addEventListener('mouseup', (e) => {
@@ -2082,7 +2086,6 @@ document.addEventListener('mouseup', (e) => {
     const baseGate = pattern[dragRow][dragCol] || 1;
     if (dragType === 'gate') {
       const leftEdgeX = gridRect.left + 170 + dragCol * cellWidth;
-      const rightEdgeX = gridRect.left + 170 + (dragCol + 1) * cellWidth;
       let newGate, startCol;
       if (dragEdge === 'left') {
         const offset = e.clientX - leftEdgeX;
@@ -2093,7 +2096,8 @@ document.addEventListener('mouseup', (e) => {
         for (let c = startCol; c <= endCol && c < STEPS; c++) pattern[dragRow][c] = 0;
         pattern[dragRow][startCol] = newGate;
       } else {
-        const offset = e.clientX - rightEdgeX;
+        const endRightEdgeX = gridRect.left + 170 + (dragEndCol + 1) * cellWidth;
+        const offset = e.clientX - endRightEdgeX;
         const extraSteps = Math.ceil(offset / cellWidth - 0.5);
         newGate = Math.max(1, Math.min(16, baseGate + extraSteps));
         for (let c = dragCol; c < dragCol + newGate && c < STEPS; c++) pattern[dragRow][c] = 0;
@@ -2105,7 +2109,7 @@ document.addEventListener('mouseup', (e) => {
       autoSave();
     } else if (dragType === 'move') {
       const relX = e.clientX - gridRect.left - 170;
-      const targetCol = Math.max(0, Math.min(STEPS - 1, Math.round(relX / cellWidth)));
+      const targetCol = Math.max(0, Math.min(STEPS - 1, Math.floor(relX / cellWidth)));
       const elUnder = document.elementFromPoint(e.clientX, e.clientY);
       const rowEl = elUnder?.closest?.('[data-track-row]');
       const rawRow = rowEl ? parseInt(rowEl.dataset.trackRow) : dragRow;
