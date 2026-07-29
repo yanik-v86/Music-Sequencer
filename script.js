@@ -3231,6 +3231,15 @@ document.addEventListener('DOMContentLoaded', () => {
   renderProjectList();
   const newBtn = document.getElementById('newProjectBtn');
   if (newBtn) newBtn.addEventListener('click', newProject);
+
+  // Fetch git commit hash for version tag
+  fetch('https://api.github.com/repos/yanik-v86/Music-Sequencer/commits/master')
+    .then(r => r.json())
+    .then(d => {
+      const tag = document.getElementById('versionTag');
+      if (tag && d.sha) tag.textContent = 'v4-' + d.sha.slice(0, 7);
+    })
+    .catch(() => {});
 });
 
 // Save on page unload to preserve recordings
