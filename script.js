@@ -11,6 +11,7 @@ const SCALES = {
   mixolydian: [0, 2, 4, 5, 7, 9, 10, 12],
   harmonicMinor: [0, 2, 3, 5, 7, 8, 11, 12],
   wholeTone:  [0, 2, 4, 6, 8, 10, 12, 14],
+  chromatic:  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
 };
 
 const MOODS = [
@@ -30,13 +31,17 @@ const MOODS = [
 
 const TRACKS = [
   { id:'m0',  name:'C3',  type:'melody', freqIdx:0 },
-  { id:'m1',  name:'D3',  type:'melody', freqIdx:1 },
-  { id:'m2',  name:'E3',  type:'melody', freqIdx:2 },
-  { id:'m3',  name:'F3',  type:'melody', freqIdx:3 },
-  { id:'m4',  name:'G3',  type:'melody', freqIdx:4 },
-  { id:'m5',  name:'A3',  type:'melody', freqIdx:5 },
-  { id:'m6',  name:'B3',  type:'melody', freqIdx:6 },
-  { id:'m7',  name:'C4',  type:'melody', freqIdx:7 },
+  { id:'m1',  name:'C#3', type:'melody', freqIdx:1 },
+  { id:'m2',  name:'D3',  type:'melody', freqIdx:2 },
+  { id:'m3',  name:'D#3', type:'melody', freqIdx:3 },
+  { id:'m4',  name:'E3',  type:'melody', freqIdx:4 },
+  { id:'m5',  name:'F3',  type:'melody', freqIdx:5 },
+  { id:'m6',  name:'F#3', type:'melody', freqIdx:6 },
+  { id:'m7',  name:'G3',  type:'melody', freqIdx:7 },
+  { id:'m8',  name:'G#3', type:'melody', freqIdx:8 },
+  { id:'m9',  name:'A3',  type:'melody', freqIdx:9 },
+  { id:'m10', name:'A#3', type:'melody', freqIdx:10 },
+  { id:'m11', name:'B3',  type:'melody', freqIdx:11 },
   { id:'b0',  name:'Bass 1', type:'bass', freqIdx:0 },
   { id:'b1',  name:'Bass 2', type:'bass', freqIdx:1 },
   { id:'b2',  name:'Bass 3', type:'bass', freqIdx:2 },
@@ -52,9 +57,9 @@ const TRACKS = [
 const TRACK_COUNT = TRACKS.length;
 
 const SECTION_RANGES = {
-  melody:     [0, 8],
-  bass:       [8, 12],
-  percussion: [12, 18],
+  melody:     [0, 12],
+  bass:       [12, 16],
+  percussion: [16, 22],
 };
 
 let pattern = Array.from({length:TRACK_COUNT}, () => Array(STEPS).fill(false));
@@ -66,6 +71,7 @@ let patternBank = [];
 let patternTrackVolumes = [];
 let patternMoods = new Array(MAX_PATTERNS).fill(0);
 let patternOctaves = new Array(MAX_PATTERNS).fill(0);
+let patternBorders = new Array(MAX_PATTERNS).fill(null);
 let currentPatternIdx = 0;
 let overdubMode = false;
 let previewEnabled = true;
@@ -124,7 +130,8 @@ for (let p = 0; p < MAX_PATTERNS; p++) {
 const sectionName = { melody:'melody', bass:'bass', perc:'percussion' };
 
 function isSectionMuted(trackType) {
-  return sectionMuted[sectionName[trackType]];
+  const section = sectionName[trackType];
+  return section ? sectionMuted[section] : false;
 }
 
 function isTrackMuted(r) {
@@ -133,6 +140,11 @@ function isTrackMuted(r) {
 
 function freqForMood(track, mood, octave) {
   if (octave == null) octave = octaveShift;
+  if (track.type === 'melody') {
+    const semi = track.freqIdx;
+    const o = octave * 12;
+    return ROOT_FREQ * Math.pow(2, (semi + o) / 12);
+  }
   const intervals = SCALES[mood.scale];
   const semi = intervals[track.freqIdx];
   const o = (track.type === 'bass' ? -12 : 0) + octave * 12;
@@ -1188,7 +1200,7 @@ function startPlayback() {
 function stopPlayback() {
   playing = false;
   if (timerID) { clearTimeout(timerID); timerID = null; }
-  // Clear pending queue on stop
+  if (isRecording) initRecording();
   pendingPatternIdx = null;
   pendingOverdubToggle = false;
   displayStep = -1;
@@ -1263,6 +1275,8 @@ function buildTimelineGrid() {
       cell.className = 'tl-cell';
       cell.dataset.tlRow = info.row;
       cell.dataset.tlCol = c;
+      cell.dataset.tlTrack = trackId;
+      cell.addEventListener('mousedown', onTimelineCellDown);
       frag.appendChild(cell);
       cells.push(cell);
     }
@@ -1303,6 +1317,102 @@ function updateTimelineCell(row, col, on, type, sound) {
   } else {
     cell.classList.remove('on');
   }
+}
+
+function onTimelineCellDown(e) {
+  if (e.button !== 0) return;
+  const cell = e.currentTarget;
+  const row = parseInt(cell.dataset.tlRow, 10);
+  const col = parseInt(cell.dataset.tlCol, 10);
+  const trackId = parseInt(cell.dataset.tlTrack, 10);
+  const trackInfo = timelineTracks.get(trackId);
+  if (!trackInfo) return;
+
+  // Check if we're dragging an existing event (click on filled cell)
+  const existingEventIdx = recordedEvents.findIndex(ev => 
+    ev.track === trackId && 
+    Math.abs(ev.time - (timelineResolutionMode === 'seconds' ? col : col * (60 / bpm / 4))) < 0.05
+  );
+
+  if (existingEventIdx >= 0) {
+    // Start drag-to-move
+    startTimelineDrag(existingEventIdx, row, col, trackInfo, e);
+    return;
+  }
+
+  // Toggle cell (add/remove event)
+  const stepDuration = 60 / bpm / 4;
+  const time = timelineResolutionMode === 'seconds' ? col : col * stepDuration;
+  
+  const idx = recordedEvents.findIndex(ev => ev.track === trackId && Math.abs(ev.time - time) < stepDuration / 2);
+  if (idx >= 0) {
+    // Remove event
+    recordedEvents.splice(idx, 1);
+    updateTimelineCell(row, col, false);
+  } else {
+    // Add new event
+    const event = {
+      track: trackId,
+      time,
+      type: trackInfo.type,
+      sound: trackInfo.sound,
+      vol: trackVolumes[trackId] || 1,
+      dur: stepDuration * 0.85
+    };
+    if (trackInfo.type !== 'perc') {
+      const mood = MOODS.find(m => m.id === patternMoods[currentPatternIdx]) || MOODS[0];
+      event.freq = freqForMood(trackInfo, mood, patternOctaves[currentPatternIdx] || 0);
+      event.wave = mood.wave;
+      event.filter = mood.filter;
+      event.mood = patternMoods[currentPatternIdx];
+      event.octave = patternOctaves[currentPatternIdx] || 0;
+    }
+    recordedEvents.push(event);
+    updateTimelineCell(row, col, true, trackInfo.type, trackInfo.sound);
+  }
+  autoSave();
+}
+
+function startTimelineDrag(eventIdx, startRow, startCol, trackInfo, e) {
+  const dragData = {
+    eventIdx,
+    startRow,
+    startCol,
+    trackInfo,
+    startX: e.clientX,
+    startY: e.clientY,
+    stepDuration: 60 / bpm / 4
+  };
+
+  function onMove(ev) {
+    const dx = ev.clientX - dragData.startX;
+    const colDelta = Math.round(dx / 28); // cell width
+    const newCol = Math.max(0, dragData.startCol + colDelta);
+    
+    // Visual feedback: highlight target cell
+    tlCells[dragData.startRow].forEach((c, cIdx) => c.classList.toggle('drag-target', cIdx === newCol));
+  }
+
+  function onUp(ev) {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    tlCells[dragData.startRow].forEach(c => c.classList.remove('drag-target'));
+    
+    const dx = ev.clientX - dragData.startX;
+    const colDelta = Math.round(dx / 28);
+    if (colDelta !== 0) {
+      const newCol = Math.max(0, dragData.startCol + colDelta);
+      const newTime = timelineResolutionMode === 'seconds' ? newCol : newCol * dragData.stepDuration;
+      recordedEvents[dragData.eventIdx].time = newTime;
+      // Rebuild grid to reflect moved event
+      buildTimelineGrid();
+    }
+    autoSave();
+  }
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+  e.preventDefault();
 }
 
 function renderTimelinePlayhead() {
@@ -1358,8 +1468,10 @@ function scheduleTimeline() {
   const elapsed = now - timelineNextEventTime + 0.01; // small offset
   timelinePlayhead = Math.floor(elapsed / stepDuration);
   
-  // Check if we've passed the end
-  if (timelineEventIndex >= recordedEvents.length && timelinePlayhead > numCols) {
+  // Check if we've passed the end of the recording (not just grid width)
+  const maxEventTime = recordedEvents.length > 0 ? recordedEvents[recordedEvents.length - 1].time : 0;
+  const maxEventStep = Math.ceil(maxEventTime / stepDuration);
+  if (timelineEventIndex >= recordedEvents.length && timelinePlayhead > maxEventStep + 2) {
     stopTimelinePlayback();
     return;
   }
@@ -1455,6 +1567,9 @@ function initRecording() {
     timelineDuration = audioCtx.currentTime - recordStartTime;
     tlStatus.textContent = recordedEvents.length + ' events recorded, ' + timelineDuration.toFixed(1) + 's';
     buildTimelineGrid();
+    stopPlayback();
+    saveProjectToStorage(currentProjectIdx);
+    saveState();
   }
 }
 
@@ -1624,7 +1739,7 @@ TRACKS.forEach((track, r) => {
       autoSave();
       if (previewEnabled && pattern[r][targetCol]) previewCell(r, targetCol);
       if (isRecording && playing && pattern[r][targetCol]) {
-        const pos = ((scheduleStep >= 0 ? scheduleStep : 0) + 1) % TL_STEPS;
+        const pos = ((scheduleStep >= 0 ? scheduleStep : 0) + 1) % STEPS;
         const quantPos = quantizeStep(pos);
         recordedEvents.push({ track: r, step: quantPos });
         updateTimelineCell(r, quantPos, true);
@@ -1965,6 +2080,9 @@ function buildPatButtons() {
     btn.className = 'pat-btn' + (i === 0 ? ' is-active' : '');
     btn.dataset.pat = i;
     btn.textContent = i + 1;
+    if (patternBorders[i]) {
+      btn.style.borderColor = patternBorders[i];
+    }
     btn.addEventListener('click', () => {
       const idx = parseInt(btn.dataset.pat);
       if (idx !== currentPatternIdx) {
@@ -1997,10 +2115,87 @@ function buildPatButtons() {
         }
       }
     });
+    btn.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      showPatColorMenu(i, e.clientX, e.clientY);
+    });
     container.appendChild(btn);
   }
 }
 buildPatButtons();
+
+function showPatColorMenu(patIdx, x, y) {
+  const existing = document.getElementById('patColorMenu');
+  if (existing) existing.remove();
+
+  const colors = [
+    '#c96d4a', '#d48a5a', '#e0a060', '#c97a50',  // warm
+    '#7a6a9a', '#9a7aba', '#8a6aaa', '#6a5a8a',  // deep
+    '#7d9a7a', '#9aba8a', '#6aaa7a', '#8aba90',  // airy
+    '#c96d4a', '#b84a3a', '#d45a5a', '#c94a3a',  // edge
+    '#b89a6a', '#c9aa7a', '#d0ba8a', '#b09060',  // mellow
+    '#e8a040', '#f0b860', '#d89030', '#e8b050',  // bright
+    '#5a4a6a', '#6a4a5a', '#4a3a6a', '#7a5a6a',  // dark
+    '#9ab8c9', '#7aaac9', '#8ac0d4', '#6aa0b8',  // dream
+    '#ff2d78', '#00e5ff', '#b537ff', '#ff6b35',  // cyber
+    '#ff007f', '#00f0ff', '#ffcc00', '#7f00ff',  // neon
+    '#2a4a7f', '#4a7abf', '#1a2a6a', '#6a9adf',  // void
+    '#9a4aff', '#4affd9', '#ff4a9a', '#4a6aff',  // nebula
+    '#ffffff', '#cccccc', '#999999', '#666666',  // grayscale
+  ];
+
+  const menu = document.createElement('div');
+  menu.id = 'patColorMenu';
+  menu.style.cssText = `
+    position: fixed; left:${x}px; top:${y}px; z-index:1000;
+    background:#222; border:1px solid #444; border-radius:6px;
+    padding:6px; display:grid; grid-template-columns:repeat(8,1fr); gap:4px;
+    box-shadow:0 4px 16px rgba(0,0,0,0.4);
+  `;
+
+  colors.forEach(c => {
+    const btn = document.createElement('button');
+    btn.style.cssText = `
+      width:24px; height:24px; border:2px solid ${c}; border-radius:4px;
+      background:transparent; cursor:pointer; padding:0;
+    `;
+    btn.title = c;
+    btn.addEventListener('click', () => {
+      patternBorders[patIdx] = c;
+      const btnEl = document.querySelector(`.pat-btn[data-pat="${patIdx}"]`);
+      if (btnEl) btnEl.style.borderColor = c;
+      autoSave();
+      menu.remove();
+    });
+    menu.appendChild(btn);
+  });
+
+  // Clear button
+  const clearBtn = document.createElement('button');
+  clearBtn.textContent = '✕';
+  clearBtn.style.cssText = `
+    grid-column:span 8; height:24px; border:1px dashed #666; border-radius:4px;
+    background:#333; color:#aaa; cursor:pointer; font-size:12px;
+  `;
+  clearBtn.addEventListener('click', () => {
+    patternBorders[patIdx] = null;
+    const btnEl = document.querySelector(`.pat-btn[data-pat="${patIdx}"]`);
+    if (btnEl) btnEl.style.borderColor = '';
+    autoSave();
+    menu.remove();
+  });
+  menu.appendChild(clearBtn);
+
+  document.body.appendChild(menu);
+
+  function onClickOutside(e) {
+    if (!menu.contains(e.target)) {
+      menu.remove();
+      document.removeEventListener('click', onClickOutside);
+    }
+  }
+  setTimeout(() => document.addEventListener('click', onClickOutside), 0);
+}
 
 function updatePatButtons() {
   document.querySelectorAll('.pat-btn').forEach(b => {
@@ -2008,6 +2203,9 @@ function updatePatButtons() {
     b.classList.toggle('is-active', idx === currentPatternIdx);
     b.classList.toggle('is-playing', overdubMode && idx === overdubReturnPattern);
     b.classList.toggle('is-queued', playing && idx === pendingPatternIdx);
+    if (patternBorders[idx]) {
+      b.style.borderColor = patternBorders[idx];
+    }
   });
 }
 
@@ -2415,12 +2613,12 @@ function loadState() {
     if (data.reverbMix != null) {
       reverbMix = data.reverbMix;
       if (reverbSlider) reverbSlider.value = reverbMix * 100;
-      if (reverbGain) reverbGain.gain.setValueAtTime(reverbMix, audioCtx.currentTime);
+      if (reverbGain && audioCtx) reverbGain.gain.setValueAtTime(reverbMix, audioCtx.currentTime);
     }
     if (data.delayMix != null) {
       delayMix = data.delayMix;
       if (delaySlider) delaySlider.value = delayMix * 100;
-      if (delayGain) delayGain.gain.setValueAtTime(delayMix, audioCtx.currentTime);
+      if (delayGain && audioCtx) delayGain.gain.setValueAtTime(delayMix, audioCtx.currentTime);
     }
 
     updatePatNoteIndicators();
@@ -2567,12 +2765,15 @@ function loadProjectFromStorage(idx) {
     }
     if (d.trackOverrides) for (let r = 0; r < Math.min(TRACK_COUNT, d.trackOverrides.length); r++) trackOverrides[r] = d.trackOverrides[r] || null;
     if (d.previewEnabled != null) previewEnabled = d.previewEnabled;
-    if (d.metronomeEnabled != null) { metronomeEnabled = d.metronomeEnabled; if (!metronomeEnabled) stopMetronome(); }
+    if (d.metronomeEnabled != null) { metronomeEnabled = d.metronomeEnabled; }
     if (d.metronomeVolume != null) metronomeVolume = d.metronomeVolume;
     if (d.quantizeStepSize != null) { quantizeStepSize = d.quantizeStepSize; if (quantSelect) quantSelect.value = d.quantizeStepSize; }
     if (d.recordedEvents) recordedEvents = d.recordedEvents;
-    if (d.reverbMix != null) { reverbMix = d.reverbMix; if (reverbSlider) reverbSlider.value = reverbMix * 100; if (reverbGain) reverbGain.gain.setValueAtTime(reverbMix, audioCtx.currentTime); }
-    if (d.delayMix != null) { delayMix = d.delayMix; if (delaySlider) delaySlider.value = delayMix * 100; if (delayGain) delayGain.gain.setValueAtTime(delayMix, audioCtx.currentTime); }
+    if (recordedEvents && recordedEvents.length) {
+      timelineDuration = Math.max(...recordedEvents.map(ev => ev.time));
+    }
+    if (d.reverbMix != null) { reverbMix = d.reverbMix; if (reverbSlider) reverbSlider.value = reverbMix * 100; if (reverbGain && audioCtx) reverbGain.gain.setValueAtTime(reverbMix, audioCtx.currentTime); }
+    if (d.delayMix != null) { delayMix = d.delayMix; if (delaySlider) delaySlider.value = delayMix * 100; if (delayGain && audioCtx) delayGain.gain.setValueAtTime(delayMix, audioCtx.currentTime); }
 
     loadPattern(currentPatternIdx);
     updatePatNoteIndicators();
@@ -2621,7 +2822,7 @@ function newProject() {
   for (let r = 0; r < TRACK_COUNT; r++)
     for (let c = 0; c < STEPS; c++)
       updateCell(r, c);
-  moodSelect.value = MOODS[0].id;
+  moodSelect.value = 0;
   patternMoods[currentPatternIdx] = 0;
   bpm = 110; bpmSlider.value = 110; bpmDisplay.textContent = '110';
   volume = 0.7; volSlider.value = 70; if (masterGain) masterGain.gain.value = 0.7;
@@ -2654,15 +2855,31 @@ function newProject() {
 
 document.addEventListener('DOMContentLoaded', () => {
   initProjects();
-  const hasData = (function() {
-    try { return !!localStorage.getItem('seq-project-0'); } catch(_) { return false; }
+  
+  // Check if we have any project data (either in project list or project-0 directly)
+  const hasProjectData = (function() {
+    try {
+      const projectsRaw = localStorage.getItem(PROJECTS_KEY);
+      const hasProjectList = projectsRaw && JSON.parse(projectsRaw).length > 0;
+      const hasProject0 = !!localStorage.getItem('seq-project-0');
+      return hasProjectList || hasProject0;
+    } catch(_) { return false; }
   })();
-  if (hasData) {
+  
+  if (hasProjectData) {
     // Reload from project 0 (overwrites whatever loadState() loaded from old key)
-    loadProjectFromStorage(0);
+    const loaded = loadProjectFromStorage(0);
+    // If load failed or loaded incomplete patterns, ensure all 16 patterns exist
+    if (!loaded || patternBank.some(p => p.every(r => r.every(c => !c)))) {
+      initDemoPatterns();
+    }
     for (let r = 0; r < TRACK_COUNT; r++)
       for (let c = 0; c < STEPS; c++)
         updateCell(r, c);
+    // Rebuild timeline grid if there are recorded events
+    if (recordedEvents && recordedEvents.length) {
+      buildTimelineGrid();
+    }
   } else {
     // First run — save current state (from old key or demo) as project 0
     saveProjectToStorage(0);
@@ -2673,7 +2890,22 @@ document.addEventListener('DOMContentLoaded', () => {
   if (newBtn) newBtn.addEventListener('click', newProject);
 });
 
-autoSave = function() { setTimeout(saveState, 0); };
+// Save on page unload to preserve recordings
+window.addEventListener('beforeunload', () => {
+  saveProjectToStorage(currentProjectIdx);
+  saveState();
+});
+
+// Also save on page hide (mobile)
+window.addEventListener('pagehide', () => {
+  saveProjectToStorage(currentProjectIdx);
+  saveState();
+});
+
+autoSave = function() { 
+  saveProjectToStorage(currentProjectIdx);
+  setTimeout(saveState, 0); 
+};
 
 const origClear = clearBtn.click;
 clearBtn.addEventListener('click', autoSave);
@@ -2698,61 +2930,61 @@ function initDemoPatterns() {
 
   // P0 — Intro: kick, sparse melody
   let p = empty();
-  p[12] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
   p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
   p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0]);
   patterns.push(p);
 
   // P1 — Add HH closed on 1/8ths
   p = empty();
-  p[12] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[14] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
   p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
   p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0]);
   patterns.push(p);
 
   // P2 — Add snare on 2 & 4
   p = empty();
-  p[12] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[14] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[17] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
   p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
   p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0]);
   patterns.push(p);
 
   // P3 — Add bass line
   p = empty();
-  p[12] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[14] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[17] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[12] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
   p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[8]  = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
-  p[9]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
   p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
   p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0]);
   patterns.push(p);
 
   // P4 — Full groove, add open HH + clap
   p = empty();
-  p[12] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[14] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[15] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[19] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[17] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[20] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[12] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
   p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[16] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[8]  = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
-  p[9]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
   p[0]  = R([1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
   p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
   patterns.push(p);
 
   // P5 — Melody variation: add movement
   p = empty();
-  p[12] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[14] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[15] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[19] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[17] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[20] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[12] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
   p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[16] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[8]  = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
-  p[9]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
   p[0]  = R([1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
   p[1]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0]);
   p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
@@ -2762,14 +2994,14 @@ function initDemoPatterns() {
 
   // P6 — Fill: tom roll, busy rhythm
   p = empty();
-  p[12] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[14] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[15] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[19] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[17] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[20] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[12] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
   p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[16] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[8]  = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
-  p[9]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[17] = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 1,1,1,1]);
+  p[21] = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 1,1,1,1]);
   p[0]  = R([1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
   p[1]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0]);
   p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
@@ -2779,8 +3011,8 @@ function initDemoPatterns() {
 
   // P7 — Breakdown: drop drums, bass + melody
   p = empty();
-  p[8]  = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
-  p[9]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[12] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
+  p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
   p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
   p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0]);
   p[4]  = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
@@ -2789,10 +3021,10 @@ function initDemoPatterns() {
 
   // P8 — Build up: bring HH back, add energy
   p = empty();
-  p[14] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[12] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[8]  = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
-  p[9]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[12] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
+  p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
   p[0]  = R([1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
   p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
   p[4]  = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
@@ -2800,14 +3032,14 @@ function initDemoPatterns() {
 
   // P9 — Drop: full energy
   p = empty();
-  p[12] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[14] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[15] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[19] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[17] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[20] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[12] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
   p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[16] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[8]  = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
-  p[9]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[10] = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
+  p[14] = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
   p[0]  = R([1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
   p[1]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0]);
   p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
@@ -2820,14 +3052,14 @@ function initDemoPatterns() {
 
   // P10 — Syncopated variation
   p = empty();
-  p[12] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[14] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[15] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[16] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[8]  = R([1,0,0,1, 0,0,1,0, 1,0,0,1, 0,0,1,0]);
-  p[9]  = R([0,0,1,0, 1,0,0,0, 0,0,1,0, 1,0,0,0]);
-  p[10] = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
+  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[19] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[17] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[20] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[12] = R([1,0,0,1, 0,0,1,0, 1,0,0,1, 0,0,1,0]);
+  p[13] = R([0,0,1,0, 1,0,0,0, 0,0,1,0, 1,0,0,0]);
+  p[14] = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
   p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,1,0, 0,0,0,0]);
   p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
   p[5]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0]);
@@ -2835,14 +3067,14 @@ function initDemoPatterns() {
 
   // P11 — Fill: snare + tom rolls
   p = empty();
-  p[12] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[14] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[15] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,1,1,1]);
-  p[16] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[8]  = R([1,0,0,1, 0,0,1,0, 1,0,0,1, 0,0,1,0]);
-  p[9]  = R([0,0,1,0, 1,0,0,0, 0,0,1,0, 1,0,0,0]);
-  p[17] = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 1,1,1,1]);
+  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[19] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[17] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,1,1,1]);
+  p[20] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[12] = R([1,0,0,1, 0,0,1,0, 1,0,0,1, 0,0,1,0]);
+  p[13] = R([0,0,1,0, 1,0,0,0, 0,0,1,0, 1,0,0,0]);
+  p[21] = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 1,1,1,1]);
   p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,1,0, 0,0,0,0]);
   p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
   p[5]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0]);
@@ -2850,26 +3082,26 @@ function initDemoPatterns() {
 
   // P12 — Sparse: kick + bass + melody
   p = empty();
-  p[12] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[8]  = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
-  p[9]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[12] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
+  p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
   p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
   patterns.push(p);
 
   // P13 — Kick only
   p = empty();
-  p[12] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
   patterns.push(p);
 
   // P14 — Kick + HH closed
   p = empty();
-  p[12] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[14] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
   patterns.push(p);
 
   // P15 — Single note loop point
   p = empty();
-  p[12] = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
+  p[16] = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
   p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
   patterns.push(p);
 
@@ -2891,24 +3123,6 @@ function initDemoPatterns() {
   updatePatNoteIndicators();
   updateVolumeBars();
   buildPatButtons();
-}
-
-// Check if project system has data — if so, skip old single-state loading
-const hasProjectData = (function() {
-  try {
-    const raw = localStorage.getItem(PROJECTS_KEY);
-    if (raw) {
-      const p = JSON.parse(raw);
-      return Array.isArray(p) && p.length > 0 && !!localStorage.getItem('seq-project-0');
-    }
-  } catch(_) {}
-  return false;
-})();
-
-if (!hasProjectData) {
-  if (!loadState()) initDemoPatterns();
-  // Clean up old single-state key to avoid stale data
-  try { localStorage.removeItem('sequencer-state'); } catch(_) {}
 }
 
 updateAllTrackSoundLabels();
