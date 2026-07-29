@@ -1736,6 +1736,9 @@ TRACKS.forEach((track, r) => {
     const cell = document.createElement('div');
     cell.className = 'cell';
     cell.dataset.trackRow = r;
+    const gateLabel = document.createElement('span');
+    gateLabel.className = 'gate-label';
+    cell.appendChild(gateLabel);
     cell.addEventListener('mouseenter', () => highlightRow(r, true));
     cell.addEventListener('mouseleave', () => highlightRow(r, false));
     cell.addEventListener('click', () => {
@@ -2101,7 +2104,8 @@ function updateCell(row, col) {
   const val = pattern[row][col];
   if (val > 0) {
     cell.classList.add('on');
-    cell.dataset.gate = val;
+    const label = cell.querySelector('.gate-label');
+    if (label) label.textContent = val > 1 ? String(val) : '';
     const track = TRACKS[row];
     const palette = track.type === 'melody' ? currentMood.colors
       : track.type === 'bass' ? ['#7d9a7a','#8aaa7a','#6a8a6a','#9aba8a']
@@ -2109,7 +2113,8 @@ function updateCell(row, col) {
     cell.style.setProperty('--cell-color', palette[row % palette.length]);
   } else {
     cell.classList.remove('on');
-    cell.removeAttribute('data-gate');
+    const label = cell.querySelector('.gate-label');
+    if (label) label.textContent = '';
   }
   updateRowGateVisual(row);
 }
