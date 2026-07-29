@@ -74,7 +74,7 @@ let patternOctaves = new Array(MAX_PATTERNS).fill(0);
 let patternBorders = new Array(MAX_PATTERNS).fill(null);
 let currentPatternIdx = 0;
 let defaultGate = 1;
-let dragRow = null, dragCol = null, dragStartX = 0, dragActive = false, dragOccurred = false, dragEdge = null;
+let dragRow = null, dragCol = null, dragStartX = 0, dragActive = false, dragOccurred = false, dragEdge = null, dragType = null;
 let overdubMode = false;
 let previewEnabled = true;
 let metronomeEnabled = false;
@@ -1766,14 +1766,17 @@ TRACKS.forEach((track, r) => {
     });
 cell.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
+  if (pattern[r][c] === 0) return;
   const rect = cell.getBoundingClientRect();
   const relX = e.clientX - rect.left;
   const edgeThreshold = 8;
-  let edge = null;
-  if (relX < edgeThreshold) edge = 'left';
-  else if (relX > rect.width - edgeThreshold) edge = 'right';
-  if (!edge || pattern[r][c] === 0) return;
-  startGateDrag(r, c, e.clientX, edge);
+  if (relX < edgeThreshold) {
+    startGateDrag(r, c, e.clientX, 'left');
+  } else if (relX > rect.width - edgeThreshold) {
+    startGateDrag(r, c, e.clientX, 'right');
+  } else {
+    startMoveDrag(r, c, e.clientX);
+  }
 });
     cell.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -1897,6 +1900,17 @@ function startGateDrag(row, col, clientX, edge) {
   dragCol = col;
   dragStartX = clientX;
   dragEdge = edge;
+  dragType = 'gate';
+  dragActive = true;
+  dragOccurred = false;
+}
+
+function startMoveDrag(row, col, clientX) {
+  dragRow = row;
+  dragCol = col;
+  dragStartX = clientX;
+  dragEdge = null;
+  dragType = 'move';
   dragActive = true;
   dragOccurred = false;
 }
@@ -1905,12 +1919,13 @@ function clearGateDrag() {
   dragRow = null;
   dragCol = null;
   dragEdge = null;
+  dragType = null;
   dragActive = false;
   dragOccurred = false;
   for (let c = 0; c < STEPS; c++) {
     for (let r = 0; r < TRACK_COUNT; r++) {
       const el = getCellEl(r, c);
-      el.classList.remove('drag-preview', 'drag-origin');
+      el.classList.remove('drag-preview', 'drag-origin', 'drag-ghost', 'drag-target');
       el.removeAttribute('data-drag-gate');
     }
   }
@@ -1995,38 +2010,45 @@ document.addEventListener('mousemove', (e) => {
   if (!dragActive || dragRow == null) return;
   for (let c = 0; c < STEPS; c++) {
     const el = getCellEl(dragRow, c);
-    el.classList.remove('drag-preview', 'drag-origin');
+    el.classList.remove('drag-preview', 'drag-origin', 'drag-ghost', 'drag-target');
     el.removeAttribute('data-drag-gate');
   }
   const grid = document.getElementById('grid');
   const gridRect = grid.getBoundingClientRect();
   const cellWidth = gridRect.width / (STEPS + 1);
   const baseGate = pattern[dragRow][dragCol] || 1;
-  const leftEdgeX = gridRect.left + cellWidth + dragCol * cellWidth;
-  const rightEdgeX = gridRect.left + cellWidth + (dragCol + 1) * cellWidth;
-  let startCol, endCol, curGate;
-  if (dragEdge === 'left') {
-    const offset = e.clientX - leftEdgeX;
-    const extraSteps = Math.ceil(offset / cellWidth - 0.5);
-    startCol = dragCol + extraSteps;
-    endCol = dragCol + baseGate - 1;
-    curGate = Math.max(1, Math.min(16, endCol - startCol + 1));
-    for (let c = Math.max(0, startCol); c <= Math.min(endCol, STEPS - 1); c++) {
-      const el = getCellEl(dragRow, c);
-      el.classList.add('drag-preview');
-      if (c === Math.max(0, startCol)) el.classList.add('drag-origin');
-      el.dataset.dragGate = curGate;
+  if (dragType === 'gate') {
+    const leftEdgeX = gridRect.left + cellWidth + dragCol * cellWidth;
+    const rightEdgeX = gridRect.left + cellWidth + (dragCol + 1) * cellWidth;
+    let startCol, endCol, curGate;
+    if (dragEdge === 'left') {
+      const offset = e.clientX - leftEdgeX;
+      const extraSteps = Math.ceil(offset / cellWidth - 0.5);
+      startCol = dragCol + extraSteps;
+      endCol = dragCol + baseGate - 1;
+      curGate = Math.max(1, Math.min(16, endCol - startCol + 1));
+      for (let c = Math.max(0, startCol); c <= Math.min(endCol, STEPS - 1); c++) {
+        const el = getCellEl(dragRow, c);
+        el.classList.add('drag-preview');
+        if (c === Math.max(0, startCol)) el.classList.add('drag-origin');
+        el.dataset.dragGate = curGate;
+      }
+    } else {
+      const offset = e.clientX - rightEdgeX;
+      const extraSteps = Math.ceil(offset / cellWidth - 0.5);
+      curGate = Math.max(1, Math.min(16, baseGate + extraSteps));
+      for (let c = dragCol; c < dragCol + curGate && c < STEPS; c++) {
+        const el = getCellEl(dragRow, c);
+        el.classList.add('drag-preview');
+        if (c === dragCol) el.classList.add('drag-origin');
+        el.dataset.dragGate = curGate;
+      }
     }
-  } else {
-    const offset = e.clientX - rightEdgeX;
-    const extraSteps = Math.ceil(offset / cellWidth - 0.5);
-    curGate = Math.max(1, Math.min(16, baseGate + extraSteps));
-    for (let c = dragCol; c < dragCol + curGate && c < STEPS; c++) {
-      const el = getCellEl(dragRow, c);
-      el.classList.add('drag-preview');
-      if (c === dragCol) el.classList.add('drag-origin');
-      el.dataset.dragGate = curGate;
-    }
+  } else if (dragType === 'move') {
+    const relX = e.clientX - gridRect.left - cellWidth;
+    const targetCol = Math.max(0, Math.min(STEPS - 1, Math.round(relX / cellWidth)));
+    getCellEl(dragRow, dragCol).classList.add('drag-ghost');
+    getCellEl(dragRow, targetCol).classList.add('drag-target');
   }
   if (Math.abs(e.clientX - dragStartX) > 5) dragOccurred = true;
 });
@@ -2038,28 +2060,41 @@ document.addEventListener('mouseup', (e) => {
     const gridRect = grid.getBoundingClientRect();
     const cellWidth = gridRect.width / (STEPS + 1);
     const baseGate = pattern[dragRow][dragCol] || 1;
-    const leftEdgeX = gridRect.left + cellWidth + dragCol * cellWidth;
-    const rightEdgeX = gridRect.left + cellWidth + (dragCol + 1) * cellWidth;
-    let newGate, startCol;
-    if (dragEdge === 'left') {
-      const offset = e.clientX - leftEdgeX;
-      const extraSteps = Math.ceil(offset / cellWidth - 0.5);
-      startCol = Math.max(0, dragCol + extraSteps);
-      const endCol = dragCol + baseGate - 1;
-      newGate = Math.max(1, Math.min(16, endCol - startCol + 1));
-      for (let c = startCol; c <= endCol && c < STEPS; c++) pattern[dragRow][c] = 0;
-      pattern[dragRow][startCol] = newGate;
-    } else {
-      const offset = e.clientX - rightEdgeX;
-      const extraSteps = Math.ceil(offset / cellWidth - 0.5);
-      newGate = Math.max(1, Math.min(16, baseGate + extraSteps));
-      for (let c = dragCol; c < dragCol + newGate && c < STEPS; c++) pattern[dragRow][c] = 0;
-      pattern[dragRow][dragCol] = newGate;
+    if (dragType === 'gate') {
+      const leftEdgeX = gridRect.left + cellWidth + dragCol * cellWidth;
+      const rightEdgeX = gridRect.left + cellWidth + (dragCol + 1) * cellWidth;
+      let newGate, startCol;
+      if (dragEdge === 'left') {
+        const offset = e.clientX - leftEdgeX;
+        const extraSteps = Math.ceil(offset / cellWidth - 0.5);
+        startCol = Math.max(0, dragCol + extraSteps);
+        const endCol = dragCol + baseGate - 1;
+        newGate = Math.max(1, Math.min(16, endCol - startCol + 1));
+        for (let c = startCol; c <= endCol && c < STEPS; c++) pattern[dragRow][c] = 0;
+        pattern[dragRow][startCol] = newGate;
+      } else {
+        const offset = e.clientX - rightEdgeX;
+        const extraSteps = Math.ceil(offset / cellWidth - 0.5);
+        newGate = Math.max(1, Math.min(16, baseGate + extraSteps));
+        for (let c = dragCol; c < dragCol + newGate && c < STEPS; c++) pattern[dragRow][c] = 0;
+        pattern[dragRow][dragCol] = newGate;
+      }
+      for (let c = 0; c < STEPS; c++) updateCell(dragRow, c);
+      updatePatNoteIndicators();
+      defaultGate = newGate;
+      autoSave();
+    } else if (dragType === 'move') {
+      const relX = e.clientX - gridRect.left - cellWidth;
+      const targetCol = Math.max(0, Math.min(STEPS - 1, Math.round(relX / cellWidth)));
+      if (targetCol !== dragCol) {
+        for (let c = dragCol; c < Math.min(STEPS, dragCol + baseGate); c++) pattern[dragRow][c] = 0;
+        for (let c = targetCol; c < Math.min(STEPS, targetCol + baseGate); c++) pattern[dragRow][c] = 0;
+        pattern[dragRow][targetCol] = baseGate;
+        for (let c = 0; c < STEPS; c++) updateCell(dragRow, c);
+        updatePatNoteIndicators();
+        autoSave();
+      }
     }
-    for (let c = 0; c < STEPS; c++) updateCell(dragRow, c);
-    updatePatNoteIndicators();
-    defaultGate = newGate;
-    autoSave();
     clearGateDrag();
     dragOccurred = true;
     setTimeout(() => { dragOccurred = false; }, 0);
