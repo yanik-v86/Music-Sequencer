@@ -2008,10 +2008,12 @@ document.addEventListener('click', (e) => {
 
 document.addEventListener('mousemove', (e) => {
   if (!dragActive || dragRow == null) return;
-  for (let c = 0; c < STEPS; c++) {
-    const el = getCellEl(dragRow, c);
-    el.classList.remove('drag-preview', 'drag-origin', 'drag-ghost', 'drag-target');
-    el.removeAttribute('data-drag-gate');
+  for (let r = 0; r < TRACK_COUNT; r++) {
+    for (let c = 0; c < STEPS; c++) {
+      const el = getCellEl(r, c);
+      el.classList.remove('drag-preview', 'drag-origin', 'drag-ghost', 'drag-target');
+      el.removeAttribute('data-drag-gate');
+    }
   }
   const grid = document.getElementById('grid');
   const gridRect = grid.getBoundingClientRect();
@@ -2047,8 +2049,15 @@ document.addEventListener('mousemove', (e) => {
   } else if (dragType === 'move') {
     const relX = e.clientX - gridRect.left - cellWidth;
     const targetCol = Math.max(0, Math.min(STEPS - 1, Math.round(relX / cellWidth)));
-    getCellEl(dragRow, dragCol).classList.add('drag-ghost');
-    getCellEl(dragRow, targetCol).classList.add('drag-target');
+    const elUnder = document.elementFromPoint(e.clientX, e.clientY);
+    const rowEl = elUnder?.closest?.('[data-track-row]');
+    const rawRow = rowEl ? parseInt(rowEl.dataset.trackRow) : dragRow;
+    const secRange = Object.values(SECTION_RANGES).find(r => dragRow >= r[0] && dragRow < r[1]) || [0, TRACK_COUNT];
+    const targetRow = Math.max(secRange[0], Math.min(secRange[1] - 1, rawRow));
+    for (let c = dragCol; c < Math.min(STEPS, dragCol + baseGate); c++) {
+      getCellEl(dragRow, c).classList.add('drag-ghost');
+    }
+    getCellEl(targetRow, targetCol).classList.add('drag-target');
   }
   if (Math.abs(e.clientX - dragStartX) > 5) dragOccurred = true;
 });
@@ -2086,11 +2095,19 @@ document.addEventListener('mouseup', (e) => {
     } else if (dragType === 'move') {
       const relX = e.clientX - gridRect.left - cellWidth;
       const targetCol = Math.max(0, Math.min(STEPS - 1, Math.round(relX / cellWidth)));
-      if (targetCol !== dragCol) {
+      const elUnder = document.elementFromPoint(e.clientX, e.clientY);
+      const rowEl = elUnder?.closest?.('[data-track-row]');
+      const rawRow = rowEl ? parseInt(rowEl.dataset.trackRow) : dragRow;
+      const secRange = Object.values(SECTION_RANGES).find(r => dragRow >= r[0] && dragRow < r[1]) || [0, TRACK_COUNT];
+      const targetRow = Math.max(secRange[0], Math.min(secRange[1] - 1, rawRow));
+      if (targetRow !== dragRow || targetCol !== dragCol) {
         for (let c = dragCol; c < Math.min(STEPS, dragCol + baseGate); c++) pattern[dragRow][c] = 0;
-        for (let c = targetCol; c < Math.min(STEPS, targetCol + baseGate); c++) pattern[dragRow][c] = 0;
-        pattern[dragRow][targetCol] = baseGate;
+        for (let c = targetCol; c < Math.min(STEPS, targetCol + baseGate); c++) pattern[targetRow][c] = 0;
+        pattern[targetRow][targetCol] = baseGate;
         for (let c = 0; c < STEPS; c++) updateCell(dragRow, c);
+        if (targetRow !== dragRow) {
+          for (let c = 0; c < STEPS; c++) updateCell(targetRow, c);
+        }
         updatePatNoteIndicators();
         autoSave();
       }
