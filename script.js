@@ -73,6 +73,8 @@ let patternMoods = new Array(MAX_PATTERNS).fill(0);
 let patternOctaves = new Array(MAX_PATTERNS).fill(0);
 let patternBorders = new Array(MAX_PATTERNS).fill(null);
 let currentPatternIdx = 0;
+let defaultGate = 1;
+let dragRow = null, dragCol = null, dragStartX = 0, dragActive = false, dragOccurred = false;
 let overdubMode = false;
 let previewEnabled = true;
 let metronomeEnabled = false;
@@ -1737,11 +1739,16 @@ TRACKS.forEach((track, r) => {
     cell.addEventListener('mouseenter', () => highlightRow(r, true));
     cell.addEventListener('mouseleave', () => highlightRow(r, false));
     cell.addEventListener('click', () => {
+      if (dragOccurred) return;
       let targetCol = c;
       if (quantizeStepSize > 1) {
         targetCol = quantizeStep(c);
       }
-      pattern[r][targetCol] = pattern[r][targetCol] > 0 ? 0 : 1;
+      if (pattern[r][targetCol] > 0) {
+        pattern[r][targetCol] = 0;
+      } else {
+        pattern[r][targetCol] = defaultGate;
+      }
       updateCell(r, targetCol);
       updatePatNoteIndicators();
       autoSave();
@@ -1753,6 +1760,10 @@ TRACKS.forEach((track, r) => {
         updateTimelineCell(r, quantPos, true);
         document.getElementById('timelineWrap').style.display = '';
       }
+    });
+    cell.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      startGateDrag(r, c, e.clientX);
     });
     cell.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -1870,6 +1881,34 @@ function showCellCtxMenu(r, c, x, y) {
   ctxMenu.classList.add('open');
 }
 
+function startGateDrag(row, col, clientX) {
+  if (pattern[row][col] === 0) return;
+  dragRow = row;
+  dragCol = col;
+  dragStartX = clientX;
+  dragActive = true;
+  dragOccurred = false;
+}
+
+function getGridColFromX(clientX) {
+  const grid = document.getElementById('grid');
+  const rect = grid.getBoundingClientRect();
+  const cellWidth = rect.width / (STEPS + 1);
+  const relX = clientX - rect.left - cellWidth;
+  return Math.max(0, Math.min(STEPS - 1, Math.round(relX / cellWidth)));
+}
+
+function clearGateDrag() {
+  dragRow = null;
+  dragCol = null;
+  dragActive = false;
+  for (let c = 0; c < STEPS; c++) {
+    for (let r = 0; r < TRACK_COUNT; r++) {
+      getCellEl(r, c).classList.remove('drag-preview');
+    }
+  }
+}
+
 function showSectionCtxMenu(sec, x, y) {
   let options = [];
   if (sec === 'percussion') {
@@ -1914,7 +1953,9 @@ ctxMenu.addEventListener('click', (e) => {
   if (ctxMenu.dataset.cellRow != null) {
     const row = parseInt(ctxMenu.dataset.cellRow);
     const col = parseInt(ctxMenu.dataset.cellCol);
-    pattern[row][col] = parseInt(val);
+    const gateVal = parseInt(val);
+    pattern[row][col] = gateVal;
+    defaultGate = gateVal;
     updateCell(row, col);
     updatePatNoteIndicators();
     autoSave();
@@ -1941,6 +1982,41 @@ ctxMenu.addEventListener('click', (e) => {
 });
 document.addEventListener('click', (e) => {
   if (!ctxMenu.contains(e.target)) ctxMenu.classList.remove('open');
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!dragActive || dragRow == null) return;
+  const currentCol = getGridColFromX(e.clientX);
+  const delta = currentCol - dragCol;
+  let newGate = Math.max(1, Math.min(16, Math.abs(delta) + 1));
+  for (let c = 0; c < STEPS; c++) {
+    getCellEl(dragRow, c).classList.remove('drag-preview');
+  }
+  const startCol = delta >= 0 ? dragCol : currentCol;
+  const endCol = delta >= 0 ? currentCol : dragCol;
+  for (let c = startCol; c <= endCol; c++) {
+    getCellEl(dragRow, c).classList.add('drag-preview');
+  }
+  if (Math.abs(e.clientX - dragStartX) > 5) dragOccurred = true;
+});
+
+document.addEventListener('mouseup', (e) => {
+  if (!dragActive || dragRow == null) return;
+  if (dragOccurred) {
+    const currentCol = getGridColFromX(e.clientX);
+    const delta = currentCol - dragCol;
+    const newGate = Math.max(1, Math.min(16, Math.abs(delta) + 1));
+    const startCol = delta >= 0 ? dragCol : currentCol;
+    for (let c = startCol; c < startCol + newGate && c < STEPS; c++) {
+      pattern[dragRow][c] = 0;
+    }
+    pattern[dragRow][startCol] = newGate;
+    for (let c = 0; c < STEPS; c++) updateCell(dragRow, c);
+    updatePatNoteIndicators();
+    defaultGate = newGate;
+    autoSave();
+  }
+  clearGateDrag();
 });
 
 function showCtxMenu(r, x, y) {
@@ -1998,6 +2074,28 @@ function updateCell(row, col) {
   } else {
     cell.classList.remove('on');
     cell.removeAttribute('data-gate');
+  }
+  updateRowGateVisual(row);
+}
+
+function updateRowGateVisual(row) {
+  for (let c = 0; c < STEPS; c++) getCellEl(row, c).classList.remove('gate-sust');
+  const track = TRACKS[row];
+  const palette = track.type === 'melody' ? currentMood.colors
+    : track.type === 'bass' ? ['#7d9a7a','#8aaa7a','#6a8a6a','#9aba8a']
+    : ['#c99a4a','#d4aa5a','#b88a3a','#e0b86a'];
+  const color = palette[row % palette.length];
+  for (let c = 0; c < STEPS; c++) {
+    const gate = pattern[row][c];
+    if (gate > 1) {
+      for (let e = c + 1; e < Math.min(STEPS, c + gate); e++) {
+        if (pattern[row][e] === 0) {
+          const el = getCellEl(row, e);
+          el.classList.add('gate-sust');
+          el.style.setProperty('--cell-color', color);
+        }
+      }
+    }
   }
 }
 
