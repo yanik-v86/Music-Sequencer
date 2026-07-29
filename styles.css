@@ -620,7 +620,7 @@ input[type="range"]::-webkit-slider-thumb {
 
 .grid {
   display: grid;
-  grid-template-columns: 85px repeat(16, 1fr);
+  grid-template-columns: 170px repeat(16, 1fr);
   gap: 0;
   min-width: 520px;
 }
@@ -1081,7 +1081,7 @@ input[type="range"]::-webkit-slider-thumb {
 @media (max-width: 640px) {
   body { padding: 12px; }
   .container { padding: 16px; border-radius: 14px; }
-  .grid { min-width: 380px; grid-template-columns: 40px repeat(16, 1fr); }
+  .grid { min-width: 380px; grid-template-columns: 80px repeat(16, 1fr); }
   .track-label { font-size: 10px; padding: 0 3px 0 6px; height: 28px; }
   .cell { height: 28px; }
   .tl-cell { height: 12px; }

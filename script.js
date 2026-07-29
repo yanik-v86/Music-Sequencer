@@ -1640,6 +1640,11 @@ TRACKS.forEach((track, r) => {
     const sec = typeToSection[track.type];
     const info = sectionInfo[sec];
     div.innerHTML = `<span class="badge ${info.cls}">${info.badge}</span>`;
+    div.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showSectionCtxMenu(sec, e.clientX, e.clientY);
+    });
     const muteBtn = document.createElement('button');
     muteBtn.className = 'section-mute';
     muteBtn.textContent = 'On';
@@ -1837,15 +1842,60 @@ function updatePatNoteIndicators() {
   }
 }
 
+function showSectionCtxMenu(sec, x, y) {
+  let options = [];
+  if (sec === 'percussion') {
+    options = [{ label: 'Default (track default)', value: '' }];
+    PERC_SOUNDS.forEach(s => options.push({ label: s.charAt(0).toUpperCase() + s.slice(1), value: s }));
+  } else if (sec === 'bass') {
+    options = [
+      { label: 'Mood default', value: '' },
+      { label: 'Warm Sub Bass',        value: 'sine' },
+      { label: 'Acoustic/Fretless Bass', value: 'triangle' },
+      { label: 'Acid Bassline',         value: 'sawtooth' },
+      { label: 'Retro Square Bass',     value: 'square' }
+    ];
+  } else if (sec === 'melody') {
+    options = [
+      { label: 'Mood default', value: '' },
+      { label: 'FM Piano / Bell', value: 'sine' },
+      { label: 'Plucked String',   value: 'triangle' },
+      { label: 'Analog Synth',     value: 'sawtooth' },
+      { label: 'Drawbar Organ',    value: 'square' }
+    ];
+  } else { ctxMenu.classList.remove('open'); return; }
+  let html = '<div class="context-menu-header">Section: ' + (sec === 'percussion' ? 'Percussion' : sec.charAt(0).toUpperCase() + sec.slice(1)) + '</div>';
+  options.forEach(o => {
+    html += '<div class="context-menu-item" data-value="' + o.value + '">' + o.label + '</div>';
+  });
+  ctxMenu.innerHTML = html;
+  ctxMenu.dataset.section = sec;
+  ctxMenu.removeAttribute('data-track-row');
+  ctxMenu.style.left = Math.min(x, window.innerWidth - 170) + 'px';
+  ctxMenu.style.top = Math.min(y, window.innerHeight - 300) + 'px';
+  ctxMenu.classList.add('open');
+}
+
 const ctxMenu = document.getElementById('ctxMenu');
 ctxMenu.addEventListener('click', (e) => {
   const item = e.target.closest('.context-menu-item');
   if (!item) return;
-  const row = parseInt(ctxMenu.dataset.trackRow);
   const val = item.dataset.value;
-  trackOverrides[row] = val === '' ? null : val;
-  updateTrackSoundLabel(row);
-  updateCell(row, 0);
+  if (ctxMenu.dataset.section) {
+    const sec = ctxMenu.dataset.section;
+    const [start, end] = SECTION_RANGES[sec];
+    for (let r = start; r < end; r++) {
+      trackOverrides[r] = val === '' ? null : val;
+      updateTrackSoundLabel(r);
+      updateCell(r, 0);
+    }
+  } else {
+    const row = parseInt(ctxMenu.dataset.trackRow);
+    if (isNaN(row)) { ctxMenu.classList.remove('open'); return; }
+    trackOverrides[row] = val === '' ? null : val;
+    updateTrackSoundLabel(row);
+    updateCell(row, 0);
+  }
   autoSave();
   ctxMenu.classList.remove('open');
 });
@@ -1886,6 +1936,7 @@ function showCtxMenu(r, x, y) {
   });
   ctxMenu.innerHTML = html;
   ctxMenu.dataset.trackRow = r;
+  ctxMenu.removeAttribute('data-section');
   ctxMenu.style.left = Math.min(x, window.innerWidth - 170) + 'px';
   ctxMenu.style.top = Math.min(y, window.innerHeight - 300) + 'px';
   ctxMenu.classList.add('open');
@@ -2764,9 +2815,9 @@ function loadProjectFromStorage(idx) {
           patternTrackVolumes[p][r] = d.patternTrackVolumes[p][r];
     }
     if (d.trackOverrides) for (let r = 0; r < Math.min(TRACK_COUNT, d.trackOverrides.length); r++) trackOverrides[r] = d.trackOverrides[r] || null;
-    if (d.previewEnabled != null) previewEnabled = d.previewEnabled;
-    if (d.metronomeEnabled != null) { metronomeEnabled = d.metronomeEnabled; }
-    if (d.metronomeVolume != null) metronomeVolume = d.metronomeVolume;
+    if (d.previewEnabled != null) { previewEnabled = d.previewEnabled; if (previewBtn) previewBtn.classList.toggle('primary', previewEnabled); }
+    if (d.metronomeEnabled != null) { metronomeEnabled = d.metronomeEnabled; if (metroToggle) metroToggle.classList.toggle('primary', metronomeEnabled); }
+    if (d.metronomeVolume != null) { metronomeVolume = d.metronomeVolume; if (metroVol) metroVol.value = metronomeVolume * 100; }
     if (d.quantizeStepSize != null) { quantizeStepSize = d.quantizeStepSize; if (quantSelect) quantSelect.value = d.quantizeStepSize; }
     if (d.recordedEvents) recordedEvents = d.recordedEvents;
     if (recordedEvents && recordedEvents.length) {
