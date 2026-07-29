@@ -1901,14 +1901,6 @@ function startGateDrag(row, col, clientX, edge) {
   dragOccurred = false;
 }
 
-function getGridColFromX(clientX) {
-  const grid = document.getElementById('grid');
-  const rect = grid.getBoundingClientRect();
-  const cellWidth = rect.width / (STEPS + 1);
-  const relX = clientX - rect.left - cellWidth;
-  return Math.max(0, Math.min(STEPS - 1, Math.round(relX / cellWidth)));
-}
-
 function clearGateDrag() {
   dragRow = null;
   dragCol = null;
@@ -2006,23 +1998,30 @@ document.addEventListener('mousemove', (e) => {
     el.classList.remove('drag-preview', 'drag-origin');
     el.removeAttribute('data-drag-gate');
   }
-  const currentCol = getGridColFromX(e.clientX);
+  const grid = document.getElementById('grid');
+  const gridRect = grid.getBoundingClientRect();
+  const cellWidth = gridRect.width / (STEPS + 1);
+  const baseGate = pattern[dragRow][dragCol] || 1;
+  const leftEdgeX = gridRect.left + cellWidth + dragCol * cellWidth;
+  const rightEdgeX = gridRect.left + cellWidth + (dragCol + 1) * cellWidth;
   let startCol, endCol, curGate;
   if (dragEdge === 'left') {
-    startCol = Math.min(currentCol, dragCol);
-    endCol = dragCol + (pattern[dragRow][dragCol] || 1) - 1;
+    const offset = e.clientX - leftEdgeX;
+    const extraSteps = Math.ceil(offset / cellWidth - 0.5);
+    startCol = dragCol + extraSteps;
+    endCol = dragCol + baseGate - 1;
     curGate = Math.max(1, Math.min(16, endCol - startCol + 1));
-    for (let c = startCol; c <= Math.min(endCol, STEPS - 1); c++) {
+    for (let c = Math.max(0, startCol); c <= Math.min(endCol, STEPS - 1); c++) {
       const el = getCellEl(dragRow, c);
       el.classList.add('drag-preview');
-      if (c === startCol) el.classList.add('drag-origin');
+      if (c === Math.max(0, startCol)) el.classList.add('drag-origin');
       el.dataset.dragGate = curGate;
     }
   } else {
-    const delta = currentCol - dragCol;
-    curGate = Math.max(1, Math.abs(delta) + 1);
-    startCol = delta >= 0 ? dragCol : currentCol;
-    for (let c = startCol; c < startCol + curGate && c < STEPS; c++) {
+    const offset = e.clientX - rightEdgeX;
+    const extraSteps = Math.ceil(offset / cellWidth - 0.5);
+    curGate = Math.max(1, Math.min(16, baseGate + extraSteps));
+    for (let c = dragCol; c < dragCol + curGate && c < STEPS; c++) {
       const el = getCellEl(dragRow, c);
       el.classList.add('drag-preview');
       if (c === dragCol) el.classList.add('drag-origin');
@@ -2035,20 +2034,27 @@ document.addEventListener('mousemove', (e) => {
 document.addEventListener('mouseup', (e) => {
   if (!dragActive || dragRow == null) return;
   if (dragOccurred) {
-    const currentCol = getGridColFromX(e.clientX);
+    const grid = document.getElementById('grid');
+    const gridRect = grid.getBoundingClientRect();
+    const cellWidth = gridRect.width / (STEPS + 1);
+    const baseGate = pattern[dragRow][dragCol] || 1;
+    const leftEdgeX = gridRect.left + cellWidth + dragCol * cellWidth;
+    const rightEdgeX = gridRect.left + cellWidth + (dragCol + 1) * cellWidth;
     let newGate, startCol;
     if (dragEdge === 'left') {
-      startCol = Math.min(currentCol, dragCol);
-      const endCol = dragCol + (pattern[dragRow][dragCol] || 1) - 1;
+      const offset = e.clientX - leftEdgeX;
+      const extraSteps = Math.ceil(offset / cellWidth - 0.5);
+      startCol = Math.max(0, dragCol + extraSteps);
+      const endCol = dragCol + baseGate - 1;
       newGate = Math.max(1, Math.min(16, endCol - startCol + 1));
       for (let c = startCol; c <= endCol && c < STEPS; c++) pattern[dragRow][c] = 0;
       pattern[dragRow][startCol] = newGate;
     } else {
-      const delta = currentCol - dragCol;
-      newGate = Math.max(1, Math.min(16, Math.abs(delta) + 1));
-      startCol = delta >= 0 ? dragCol : currentCol;
-      for (let c = startCol; c < startCol + newGate && c < STEPS; c++) pattern[dragRow][c] = 0;
-      pattern[dragRow][startCol] = newGate;
+      const offset = e.clientX - rightEdgeX;
+      const extraSteps = Math.ceil(offset / cellWidth - 0.5);
+      newGate = Math.max(1, Math.min(16, baseGate + extraSteps));
+      for (let c = dragCol; c < dragCol + newGate && c < STEPS; c++) pattern[dragRow][c] = 0;
+      pattern[dragRow][dragCol] = newGate;
     }
     for (let c = 0; c < STEPS; c++) updateCell(dragRow, c);
     updatePatNoteIndicators();
