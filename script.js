@@ -1766,14 +1766,21 @@ TRACKS.forEach((track, r) => {
     });
 cell.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
-  if (pattern[r][c] === 0) return;
   const rect = cell.getBoundingClientRect();
   const relX = e.clientX - rect.left;
   const edgeThreshold = 8;
+  if (relX > rect.width - edgeThreshold && cell.classList.contains('gate-end')) {
+    for (let s = c; s >= 0; s--) {
+      const g = pattern[r][s];
+      if (g > 0 && s + g > c) {
+        startGateDrag(r, s, e.clientX, 'right');
+        return;
+      }
+    }
+  }
+  if (pattern[r][c] === 0) return;
   if (relX < edgeThreshold) {
     startGateDrag(r, c, e.clientX, 'left');
-  } else if (relX > rect.width - edgeThreshold) {
-    startGateDrag(r, c, e.clientX, 'right');
   } else {
     startMoveDrag(r, c, e.clientX);
   }
@@ -1926,7 +1933,8 @@ function clearGateDrag() {
     for (let r = 0; r < TRACK_COUNT; r++) {
       const el = getCellEl(r, c);
       el.classList.remove('drag-preview', 'drag-origin', 'drag-ghost', 'drag-target');
-      el.removeAttribute('data-drag-gate');
+      const label = el.querySelector('.gate-label');
+      if (label) label.textContent = pattern[r][c] > 1 ? String(pattern[r][c]) : '';
     }
   }
 }
@@ -2012,7 +2020,8 @@ document.addEventListener('mousemove', (e) => {
     for (let c = 0; c < STEPS; c++) {
       const el = getCellEl(r, c);
       el.classList.remove('drag-preview', 'drag-origin', 'drag-ghost', 'drag-target');
-      el.removeAttribute('data-drag-gate');
+      const label = el.querySelector('.gate-label');
+      if (label) label.textContent = pattern[r][c] > 1 ? String(pattern[r][c]) : '';
     }
   }
   const grid = document.getElementById('grid');
@@ -2033,7 +2042,8 @@ document.addEventListener('mousemove', (e) => {
         const el = getCellEl(dragRow, c);
         el.classList.add('drag-preview');
         if (c === Math.max(0, startCol)) el.classList.add('drag-origin');
-        el.dataset.dragGate = curGate;
+        const label = el.querySelector('.gate-label');
+        if (label) label.textContent = String(curGate);
       }
     } else {
       const offset = e.clientX - rightEdgeX;
@@ -2043,7 +2053,8 @@ document.addEventListener('mousemove', (e) => {
         const el = getCellEl(dragRow, c);
         el.classList.add('drag-preview');
         if (c === dragCol) el.classList.add('drag-origin');
-        el.dataset.dragGate = curGate;
+        const label = el.querySelector('.gate-label');
+        if (label) label.textContent = String(curGate);
       }
     }
   } else if (dragType === 'move') {
@@ -2182,7 +2193,10 @@ function updateCell(row, col) {
 }
 
 function updateRowGateVisual(row) {
-  for (let c = 0; c < STEPS; c++) getCellEl(row, c).classList.remove('gate-sust');
+  for (let c = 0; c < STEPS; c++) {
+    const el = getCellEl(row, c);
+    el.classList.remove('gate-sust', 'gate-end');
+  }
   const track = TRACKS[row];
   const palette = track.type === 'melody' ? currentMood.colors
     : track.type === 'bass' ? ['#7d9a7a','#8aaa7a','#6a8a6a','#9aba8a']
@@ -2190,6 +2204,9 @@ function updateRowGateVisual(row) {
   const color = palette[row % palette.length];
   for (let c = 0; c < STEPS; c++) {
     const gate = pattern[row][c];
+    if (gate > 0) {
+      getCellEl(row, Math.min(STEPS - 1, c + gate - 1)).classList.add('gate-end');
+    }
     if (gate > 1) {
       for (let e = c + 1; e < Math.min(STEPS, c + gate); e++) {
         if (pattern[row][e] === 0) {
