@@ -1913,7 +1913,9 @@ function clearGateDrag() {
   dragActive = false;
   for (let c = 0; c < STEPS; c++) {
     for (let r = 0; r < TRACK_COUNT; r++) {
-      getCellEl(r, c).classList.remove('drag-preview');
+      const el = getCellEl(r, c);
+      el.classList.remove('drag-preview', 'drag-origin');
+      el.removeAttribute('data-drag-gate');
     }
   }
 }
@@ -1995,20 +1997,32 @@ document.addEventListener('click', (e) => {
 
 document.addEventListener('mousemove', (e) => {
   if (!dragActive || dragRow == null) return;
-  for (let c = 0; c < STEPS; c++) getCellEl(dragRow, c).classList.remove('drag-preview');
+  for (let c = 0; c < STEPS; c++) {
+    const el = getCellEl(dragRow, c);
+    el.classList.remove('drag-preview', 'drag-origin');
+    el.removeAttribute('data-drag-gate');
+  }
   const currentCol = getGridColFromX(e.clientX);
+  let startCol, endCol, curGate;
   if (dragEdge === 'left') {
-    const previewStart = Math.min(currentCol, dragCol);
-    const previewEnd = dragCol + (pattern[dragRow][dragCol] || 1) - 1;
-    for (let c = previewStart; c <= Math.min(previewEnd, STEPS - 1); c++) {
-      getCellEl(dragRow, c).classList.add('drag-preview');
+    startCol = Math.min(currentCol, dragCol);
+    endCol = dragCol + (pattern[dragRow][dragCol] || 1) - 1;
+    curGate = Math.max(1, Math.min(16, endCol - startCol + 1));
+    for (let c = startCol; c <= Math.min(endCol, STEPS - 1); c++) {
+      const el = getCellEl(dragRow, c);
+      el.classList.add('drag-preview');
+      if (c === startCol) el.classList.add('drag-origin');
+      el.dataset.dragGate = curGate;
     }
   } else {
     const delta = currentCol - dragCol;
-    const previewGate = Math.max(1, Math.abs(delta) + 1);
-    const previewStart = delta >= 0 ? dragCol : currentCol;
-    for (let c = previewStart; c < previewStart + previewGate && c < STEPS; c++) {
-      getCellEl(dragRow, c).classList.add('drag-preview');
+    curGate = Math.max(1, Math.abs(delta) + 1);
+    startCol = delta >= 0 ? dragCol : currentCol;
+    for (let c = startCol; c < startCol + curGate && c < STEPS; c++) {
+      const el = getCellEl(dragRow, c);
+      el.classList.add('drag-preview');
+      if (c === dragCol) el.classList.add('drag-origin');
+      el.dataset.dragGate = curGate;
     }
   }
   if (Math.abs(e.clientX - dragStartX) > 5) dragOccurred = true;
