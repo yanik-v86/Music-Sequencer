@@ -2060,8 +2060,12 @@ document.addEventListener('mouseup', (e) => {
     updatePatNoteIndicators();
     defaultGate = newGate;
     autoSave();
+    clearGateDrag();
+    dragOccurred = true;
+    setTimeout(() => { dragOccurred = false; }, 0);
+  } else {
+    clearGateDrag();
   }
-  clearGateDrag();
 });
 
 function showCtxMenu(r, x, y) {
