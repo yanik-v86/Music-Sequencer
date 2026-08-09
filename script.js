@@ -29,37 +29,43 @@ const MOODS = [
   { id:'nebula', label:'Nebula', scale:'pentatonic',wave:'triangle', filter:4500, colors:['#9a4aff','#4affd9','#ff4a9a','#4a6aff'], bg:'#0c0814' },
 ];
 
-const TRACKS = [
-  { id:'m0',  name:'C3',  type:'melody', freqIdx:0 },
-  { id:'m1',  name:'C#3', type:'melody', freqIdx:1 },
-  { id:'m2',  name:'D3',  type:'melody', freqIdx:2 },
-  { id:'m3',  name:'D#3', type:'melody', freqIdx:3 },
-  { id:'m4',  name:'E3',  type:'melody', freqIdx:4 },
-  { id:'m5',  name:'F3',  type:'melody', freqIdx:5 },
-  { id:'m6',  name:'F#3', type:'melody', freqIdx:6 },
-  { id:'m7',  name:'G3',  type:'melody', freqIdx:7 },
-  { id:'m8',  name:'G#3', type:'melody', freqIdx:8 },
-  { id:'m9',  name:'A3',  type:'melody', freqIdx:9 },
-  { id:'m10', name:'A#3', type:'melody', freqIdx:10 },
-  { id:'m11', name:'B3',  type:'melody', freqIdx:11 },
-  { id:'b0',  name:'Bass 1', type:'bass', freqIdx:0 },
-  { id:'b1',  name:'Bass 2', type:'bass', freqIdx:1 },
-  { id:'b2',  name:'Bass 3', type:'bass', freqIdx:2 },
-  { id:'b3',  name:'Bass 4', type:'bass', freqIdx:3 },
+// Multi-octave piano roll: C2..B4 melody keys (3 octaves = 36 rows)
+const MELODY_BASE_SEMI = -24;   // C2, relative to C4
+const MELODY_OCTAVES = 3;
+const MELODY_TRACK_COUNT = MELODY_OCTAVES * 12;
+const BASS_TRACK_COUNT = 4;
+const PERC_TRACK_COUNT = 6;
+const OLD_TRACK_COUNT = 22;     // pre-multi-octave row count (for save migration)
+const MELODY_BASE_ROW = 24;     // old melody row 0 (C4) maps to new row 24
+const BASS_START = MELODY_TRACK_COUNT;
+const PERC_START = MELODY_TRACK_COUNT + BASS_TRACK_COUNT;
+
+const MELODY_NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+
+const TRACKS = [];
+for (let i = 0; i < MELODY_TRACK_COUNT; i++) {
+  const semi = MELODY_BASE_SEMI + i;
+  const pc = ((semi % 12) + 12) % 12;
+  TRACKS.push({ id:'m'+i, name: MELODY_NOTE_NAMES[pc] + (4 + Math.floor(semi / 12)), type:'melody', freqIdx: semi });
+}
+for (let i = 0; i < BASS_TRACK_COUNT; i++) {
+  TRACKS.push({ id:'b'+i, name:'Bass '+(i+1), type:'bass', freqIdx:i });
+}
+TRACKS.push(
   { id:'p0',  name:'Kick',   type:'perc', sound:'kick' },
   { id:'p1',  name:'Snare',  type:'perc', sound:'snare' },
   { id:'p2',  name:'HH Cls', type:'perc', sound:'hhClosed' },
   { id:'p3',  name:'HH Open',type:'perc', sound:'hhOpen' },
   { id:'p4',  name:'Clap',   type:'perc', sound:'clap' },
   { id:'p5',  name:'Tom',    type:'perc', sound:'tom' },
-];
+);
 
 const TRACK_COUNT = TRACKS.length;
 
 const SECTION_RANGES = {
-  melody:     [0, 12],
-  bass:       [12, 16],
-  percussion: [16, 22],
+  melody:     [0, MELODY_TRACK_COUNT],
+  bass:       [BASS_START, BASS_START + BASS_TRACK_COUNT],
+  percussion: [PERC_START, PERC_START + PERC_TRACK_COUNT],
 };
 
 let pattern = Array.from({length:TRACK_COUNT}, () => Array(STEPS).fill(0));
@@ -101,6 +107,9 @@ let pendingPatternIdx = null;
 let pendingOverdubToggle = false;
 
 let octaveShift = 0;
+let scaleHighlightEnabled = false;
+let scaleRoot = 0;
+let scaleType = 'major';
 let playing = false;
 let displayStep = -1;
 let scheduleStep = -1;
@@ -1725,6 +1734,13 @@ const headerDiv = document.createElement('div');
 headerDiv.className = 'grid-header';
 const corner = document.createElement('div');
 corner.className = 'step-num';
+const seqMenuBtn = document.createElement('button');
+seqMenuBtn.id = 'seq-menu';
+seqMenuBtn.className = 'seq-menu-btn';
+seqMenuBtn.type = 'button';
+seqMenuBtn.textContent = '▾ Menu';
+seqMenuBtn.title = 'Menu';
+corner.appendChild(seqMenuBtn);
 headerDiv.appendChild(corner);
 for (let c = 0; c < STEPS; c++) {
   const el = document.createElement('div');
@@ -1741,7 +1757,9 @@ const sectionInfo = {
 };
 
 let prevType = null;
+let melodyScroll = null;
 const cellElements = [];
+const trackLabelElements = [];
 const sectionMuteButtons = {};
 
 const typeToSection = { melody:'melody', bass:'bass', perc:'percussion' };
@@ -1774,12 +1792,24 @@ TRACKS.forEach((track, r) => {
     div.appendChild(muteBtn);
     sectionMuteButtons[sec] = muteBtn;
     fragment.appendChild(div);
+    // Melody rows live in their own scrollable block (piano-roll style)
+    if (track.type === 'melody' && !melodyScroll) {
+      melodyScroll = document.createElement('div');
+      melodyScroll.className = 'melody-scroll';
+      melodyScroll.style.gridColumn = '1 / -1';
+      fragment.appendChild(melodyScroll);
+    }
   }
   prevType = track.type;
+
+  const rowParent = (track.type === 'melody' && melodyScroll) ? melodyScroll : fragment;
+
+  const isBlackKey = track.type === 'melody' && [1, 3, 6, 8, 10].includes(pitchClass(track.freqIdx));
 
   const label = document.createElement('div');
   label.className = 'track-label';
   label.dataset.trackRow = r;
+  if (track.type === 'melody') label.classList.add(isBlackKey ? 'key-black' : 'key-white');
 
   const volBar = document.createElement('div');
   volBar.className = 'vol-bar';
@@ -1838,13 +1868,15 @@ TRACKS.forEach((track, r) => {
     e.stopPropagation();
     showCtxMenu(r, e.clientX, e.clientY);
   });
-  fragment.appendChild(label);
+  rowParent.appendChild(label);
+  trackLabelElements.push(label);
 
   const cells = [];
   for (let c = 0; c < STEPS; c++) {
     const cell = document.createElement('div');
     cell.className = 'cell';
     cell.dataset.trackRow = r;
+    if (track.type === 'melody') cell.classList.add(isBlackKey ? 'key-black' : 'key-white');
     const gateLabel = document.createElement('span');
     gateLabel.className = 'gate-label';
     cell.appendChild(gateLabel);
@@ -1902,7 +1934,7 @@ cell.addEventListener('mousedown', (e) => {
       if (quantizeStepSize > 1) targetCol = quantizeStep(c);
       showCellCtxMenu(r, targetCol, e.clientX, e.clientY);
     });
-    fragment.appendChild(cell);
+    rowParent.appendChild(cell);
     cells.push(cell);
   }
   cellElements.push(cells);
@@ -1911,6 +1943,19 @@ cell.addEventListener('mousedown', (e) => {
   label.addEventListener('mouseleave', () => highlightRow(r, false));
 });
 grid.appendChild(fragment);
+
+// Open the melody scroll roughly around C4 (row MELODY_BASE_ROW)
+if (melodyScroll) {
+  requestAnimationFrame(() => {
+    const keyHeights = { white: 36, black: 24 };
+    let before = 0;
+    for (let r = 0; r < MELODY_BASE_ROW; r++) {
+      const pc = pitchClass(TRACKS[r].freqIdx);
+      before += ([1, 3, 6, 8, 10].includes(pc) ? keyHeights.black : keyHeights.white);
+    }
+    melodyScroll.scrollTop = Math.max(0, before - 150);
+  });
+}
 
 function getCellEl(row, col) {
   return cellElements[row][col];
@@ -2437,6 +2482,69 @@ function applyMood(mood) {
     for (let c = 0; c < STEPS; c++)
       updateCell(r, c);
   updateGhostNotes();
+  applyScaleHighlight();
+}
+
+function pitchClass(semi) {
+  return ((semi % 12) + 12) % 12;
+}
+
+function scalePitchClasses(type) {
+  const set = new Set();
+  SCALES[type].forEach(s => set.add(((s % 12) + 12) % 12));
+  return set;
+}
+
+function rowInScale(r) {
+  const track = TRACKS[r];
+  if (track.type !== 'melody') return false;
+  const classes = scalePitchClasses(scaleType);
+  const pc = pitchClass(track.freqIdx);
+  return classes.has(((pc - scaleRoot) % 12 + 12) % 12);
+}
+
+function rowIsRoot(r) {
+  const track = TRACKS[r];
+  return track.type === 'melody' && pitchClass(track.freqIdx) === scaleRoot;
+}
+
+function syncScaleMenuState() {
+  const toggle = document.getElementById('scaleHLToggle');
+  if (toggle) toggle.checked = scaleHighlightEnabled;
+  document.querySelectorAll('#scaleRootPicker .seq-menu-opt').forEach(b => {
+    b.classList.toggle('is-active', parseInt(b.dataset.value) === scaleRoot);
+  });
+  document.querySelectorAll('#scaleTypePicker .seq-menu-opt').forEach(b => {
+    b.classList.toggle('is-active', b.dataset.value === scaleType);
+  });
+}
+
+function applyScaleHighlight() {
+  const btn = document.getElementById('seq-menu');
+  if (btn) btn.classList.toggle('is-active', scaleHighlightEnabled);
+  for (let r = 0; r < TRACK_COUNT; r++) {
+    const track = TRACKS[r];
+    const label = trackLabelElements[r];
+    if (track.type !== 'melody') continue;
+    if (!scaleHighlightEnabled) {
+      if (label) label.classList.remove('scale-in', 'scale-out', 'scale-root');
+      for (let c = 0; c < STEPS; c++) getCellEl(r, c).classList.remove('scale-in', 'scale-root');
+      continue;
+    }
+    const inScale = rowInScale(r);
+    const isRoot = rowIsRoot(r);
+    if (label) {
+      label.classList.toggle('scale-root', isRoot);
+      label.classList.toggle('scale-in', inScale && !isRoot);
+      label.classList.toggle('scale-out', !inScale);
+    }
+    for (let c = 0; c < STEPS; c++) {
+      const cell = getCellEl(r, c);
+      cell.classList.toggle('scale-root', isRoot);
+      cell.classList.toggle('scale-in', inScale && !isRoot);
+    }
+  }
+  syncScaleMenuState();
 }
 
 function randomPattern() {
@@ -2479,6 +2587,7 @@ function exportPattern() {
     currentPattern: currentPatternIdx,
     muted: Array.from(muted),
     sectionMuted,
+    scaleHighlightEnabled, scaleRoot, scaleType,
   };
   const blob = new Blob([JSON.stringify(data)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
@@ -2494,6 +2603,7 @@ function importPattern(file) {
   reader.onload = (e) => {
     try {
       const data = JSON.parse(e.target.result);
+      migrateLegacyData(data);
       if (data.version >= 2 && data.patterns) {
         for (let p = 0; p < Math.min(MAX_PATTERNS, data.patterns.length); p++) {
           const src = data.patterns[p];
@@ -2556,6 +2666,10 @@ function importPattern(file) {
         const found = MOODS.findIndex(m => m.id === data.mood);
         if (found >= 0) { moodSelect.value = found; applyMood(MOODS[found]); }
       }
+      if (data.scaleHighlightEnabled != null) scaleHighlightEnabled = !!data.scaleHighlightEnabled;
+      if (data.scaleRoot != null && data.scaleRoot >= 0 && data.scaleRoot < 12) scaleRoot = data.scaleRoot;
+      if (data.scaleType && SCALES[data.scaleType]) scaleType = data.scaleType;
+      applyScaleHighlight();
     } catch(err) {
       alert('Could not import: ' + err.message);
     }
@@ -2941,6 +3055,107 @@ moodSelect.addEventListener('change', () => {
 applyMood(MOODS[0]);
 if (previewEnabled) previewBtn.classList.add('primary');
 
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const SCALE_LABELS = {
+  major: 'Major',
+  minor: 'Minor',
+  pentatonic: 'Pentatonic',
+  blues: 'Blues',
+  dorian: 'Dorian',
+  mixolydian: 'Mixolydian',
+  harmonicMinor: 'Harmonic Minor',
+  wholeTone: 'Whole Tone',
+  chromatic: 'Chromatic'
+};
+const seqMenu = document.getElementById('seqMenu');
+const scaleHLToggle = document.getElementById('scaleHLToggle');
+const scaleRootPicker = document.getElementById('scaleRootPicker');
+const scaleTypePicker = document.getElementById('scaleTypePicker');
+
+if (seqMenu && seqMenuBtn) {
+  seqMenuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = seqMenu.classList.toggle('open');
+    if (open) {
+      const rect = seqMenuBtn.getBoundingClientRect();
+      seqMenu.style.left = Math.min(rect.left, window.innerWidth - seqMenu.offsetWidth - 8) + 'px';
+      seqMenu.style.top = (rect.bottom + 6) + 'px';
+      showSeqPanel(seqPanel);
+    }
+  });
+  document.addEventListener('click', (e) => {
+    if (!seqMenu.contains(e.target) && e.target !== seqMenuBtn) seqMenu.classList.remove('open');
+  });
+}
+let seqPanel = 'file';
+function closeSeqSubmenu() {
+  const sub = document.getElementById('seqMenuSub');
+  const btn = document.getElementById('seqMenuHelpers');
+  if (sub) sub.classList.remove('open');
+  if (btn) btn.classList.remove('is-active');
+}
+function showSeqPanel(name) {
+  seqPanel = name;
+  seqMenu.querySelectorAll('.seq-menu-panel').forEach(p => {
+    p.classList.toggle('open', p.dataset.panel === name);
+  });
+  seqMenu.querySelectorAll('.seq-menu-bar .seq-menu-item[data-panel]').forEach(b => {
+    b.classList.toggle('is-active', b.dataset.panel === name);
+  });
+  closeSeqSubmenu();
+}
+if (seqMenu) {
+  seqMenu.querySelectorAll('.seq-menu-item[data-panel]').forEach(b => {
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showSeqPanel(b.dataset.panel);
+    });
+  });
+  const helpersBtn = document.getElementById('seqMenuHelpers');
+  const seqMenuSub = document.getElementById('seqMenuSub');
+  if (helpersBtn && seqMenuSub) {
+    helpersBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = seqMenuSub.classList.toggle('open');
+      helpersBtn.classList.toggle('is-active', open);
+    });
+  }
+}
+if (scaleHLToggle) {
+  scaleHLToggle.addEventListener('change', () => {
+    scaleHighlightEnabled = scaleHLToggle.checked;
+    applyScaleHighlight();
+    autoSave();
+  });
+}
+NOTE_NAMES.forEach((name, i) => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'seq-menu-opt';
+  b.dataset.value = i;
+  b.textContent = name;
+  b.addEventListener('click', () => {
+    scaleRoot = i;
+    applyScaleHighlight();
+    autoSave();
+  });
+  scaleRootPicker.appendChild(b);
+});
+Object.keys(SCALES).forEach((key) => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'seq-menu-opt';
+  b.dataset.value = key;
+  b.textContent = SCALE_LABELS[key] || key;
+  b.addEventListener('click', () => {
+    scaleType = key;
+    applyScaleHighlight();
+    autoSave();
+  });
+  scaleTypePicker.appendChild(b);
+});
+applyScaleHighlight();
+
 const modalOverlay = document.getElementById('modalOverlay');
 document.getElementById('modalClose').addEventListener('click', () => modalOverlay.classList.remove('open'));
 document.getElementById('helpHint').addEventListener('click', () => modalOverlay.classList.add('open'));
@@ -2955,7 +3170,11 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'c') { clearBtn.click(); return; }
   if (e.key === '?') { modalOverlay.classList.add('open'); return; }
   if (e.key === '/') { modalOverlay.classList.add('open'); return; }
-  if (e.key === 'Escape') { modalOverlay.classList.remove('open'); return; }
+  if (e.key === 'Escape') {
+    modalOverlay.classList.remove('open');
+    if (seqMenu) seqMenu.classList.remove('open');
+    return;
+  }
 
   if (e.key === 'ArrowUp') { octUp.click(); return; }
   if (e.key === 'ArrowDown') { octDown.click(); return; }
@@ -2992,6 +3211,53 @@ document.addEventListener('keydown', (e) => {
 
 const STORAGE_KEY = 'sequencer-state';
 
+// ── Save layout migration ───────────────────────────────────────
+// Old saves had 22 rows (12 melody, 4 bass, 6 percussion). Remap them
+// onto the new multi-octave layout, preserving pitches (old melody
+// row 0..11 played C4..B4 → new rows MELODY_BASE_ROW..+11).
+function migrateRow(oldRow) {
+  if (oldRow < 0 || oldRow >= OLD_TRACK_COUNT) return -1;
+  if (oldRow < 12) return MELODY_BASE_ROW + oldRow;
+  if (oldRow < 16) return BASS_START + (oldRow - 12);
+  return PERC_START + (oldRow - 16);
+}
+
+function migrateArray(arr, def) {
+  const out = new Array(TRACK_COUNT).fill(def);
+  if (!Array.isArray(arr)) return out;
+  for (let i = 0; i < arr.length && i < OLD_TRACK_COUNT; i++) {
+    const nr = migrateRow(i);
+    if (nr >= 0) out[nr] = arr[i];
+  }
+  return out;
+}
+
+function isOldLayout(data) {
+  return Array.isArray(data && data.patternBank) && Array.isArray(data.patternBank[0])
+    && data.patternBank[0].length === OLD_TRACK_COUNT;
+}
+
+function migrateLegacyData(data) {
+  if (!isOldLayout(data)) return false;
+  data.patternBank = data.patternBank.map(p => migrateArray(p, 0));
+  if (data.patternTrackVolumes) data.patternTrackVolumes = data.patternTrackVolumes.map(v => migrateArray(v, 1));
+  if (Array.isArray(data.muted)) data.muted = migrateArray(data.muted, false);
+  if (Array.isArray(data.trackVolumes)) data.trackVolumes = migrateArray(data.trackVolumes, 1);
+  if (Array.isArray(data.trackOverrides)) data.trackOverrides = migrateArray(data.trackOverrides, null);
+  if (Array.isArray(data.trackGlide)) data.trackGlide = migrateArray(data.trackGlide, 0);
+  if (Array.isArray(data.pattern)) data.pattern = migrateArray(data.pattern, 0);
+  if (Array.isArray(data.recordedEvents)) {
+    for (const ev of data.recordedEvents) {
+      if (typeof ev.track === 'number') {
+        const nr = migrateRow(ev.track);
+        if (nr >= 0) ev.track = nr;
+      }
+    }
+  }
+  return true;
+}
+
+
 function saveState() {
   saveCurrentPattern();
   try {
@@ -3016,6 +3282,7 @@ function saveState() {
       timelineResolution: tlResSelect.value,
       reverbMix,
       delayMix,
+      scaleHighlightEnabled, scaleRoot, scaleType,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch(_) {}
@@ -3027,6 +3294,7 @@ function loadState() {
     if (!raw) return false;
     const data = JSON.parse(raw);
     if (!data.patternBank) return false;
+    migrateLegacyData(data);
 
     for (let p = 0; p < Math.min(MAX_PATTERNS, data.patternBank.length); p++) {
       const src = data.patternBank[p];
@@ -3143,6 +3411,10 @@ function loadState() {
 
     updatePatNoteIndicators();
     updateVolumeBars();
+    if (data.scaleHighlightEnabled != null) scaleHighlightEnabled = !!data.scaleHighlightEnabled;
+    if (data.scaleRoot != null && data.scaleRoot >= 0 && data.scaleRoot < 12) scaleRoot = data.scaleRoot;
+    if (data.scaleType && SCALES[data.scaleType]) scaleType = data.scaleType;
+    applyScaleHighlight();
     return true;
   } catch(_) { return false; }
 }
@@ -3259,6 +3531,7 @@ function saveProjectToStorage(idx) {
     quantizeStepSize,
     recordedEvents,
     reverbMix, delayMix,
+    scaleHighlightEnabled, scaleRoot, scaleType,
     currentPattern: currentPatternIdx,
   };
   try { localStorage.setItem(key, JSON.stringify(data)); } catch(_) {}
@@ -3281,6 +3554,7 @@ function loadProjectFromStorage(idx) {
     if (!raw) return false;
     const d = JSON.parse(raw);
     if (!d.patternBank) return false;
+    const wasOldLayout = migrateLegacyData(d);
 
     for (let p = 0; p < Math.min(MAX_PATTERNS, d.patternBank.length); p++) {
       const src = d.patternBank[p];
@@ -3333,8 +3607,9 @@ function loadProjectFromStorage(idx) {
     if (d.trackSamples && SampleEngine) {
       for (const [trackId, assignment] of Object.entries(d.trackSamples)) {
         const tid = parseInt(trackId);
-        if (!isNaN(tid) && tid < TRACK_COUNT) {
-          SampleEngine.assignSampleToTrack(tid, assignment.sampleId, assignment);
+        const row = wasOldLayout ? migrateRow(tid) : tid;
+        if (!isNaN(row) && row >= 0 && row < TRACK_COUNT) {
+          SampleEngine.assignSampleToTrack(row, assignment.sampleId, assignment);
         }
       }
     }
@@ -3343,6 +3618,10 @@ function loadProjectFromStorage(idx) {
     loadPattern(currentPatternIdx, true);
     updatePatNoteIndicators();
     updateVolumeBars();
+    if (d.scaleHighlightEnabled != null) scaleHighlightEnabled = !!d.scaleHighlightEnabled;
+    if (d.scaleRoot != null && d.scaleRoot >= 0 && d.scaleRoot < 12) scaleRoot = d.scaleRoot;
+    if (d.scaleType && SCALES[d.scaleType]) scaleType = d.scaleType;
+    applyScaleHighlight();
 
     if (recordedEvents && recordedEvents.length) {
       timelineWrap.style.display = '';
@@ -3392,6 +3671,9 @@ function newProject() {
   bpm = 110; bpmSlider.value = 110; bpmDisplay.textContent = '110';
   volume = 0.7; volSlider.value = 70; if (masterGain) masterGain.gain.value = 0.7;
   octaveShift = 0; updateOctaveDisplay();
+  scaleHighlightEnabled = false;
+  scaleRoot = 0;
+  scaleType = 'major';
   for (let r = 0; r < TRACK_COUNT; r++) { muted[r] = false; trackVolumes[r] = 0.7; trackOverrides[r] = null; }
   sectionMuted = { melody: false, bass: false, percussion: false };
   for (const sec of ['melody','bass','percussion']) {
@@ -3409,6 +3691,7 @@ function newProject() {
   loadPattern(0);
   updatePatNoteIndicators();
   updateVolumeBars();
+  applyScaleHighlight();
 
   const proj = { name: name.trim() };
   projects.push(proj);
@@ -3504,179 +3787,179 @@ function initDemoPatterns() {
 
   // P0 — Intro: kick, sparse melody
   let p = empty();
-  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
-  p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0]);
+  p[PERC_START] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[MELODY_BASE_ROW]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0]);
   patterns.push(p);
 
   // P1 — Add HH closed on 1/8ths
   p = empty();
-  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
-  p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0]);
+  p[PERC_START] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[PERC_START + 2] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[MELODY_BASE_ROW]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0]);
   patterns.push(p);
 
   // P2 — Add snare on 2 & 4
   p = empty();
-  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[17] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
-  p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0]);
+  p[PERC_START] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[PERC_START + 2] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[PERC_START + 1] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[MELODY_BASE_ROW]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0]);
   patterns.push(p);
 
   // P3 — Add bass line
   p = empty();
-  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[17] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[12] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
-  p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
-  p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0]);
+  p[PERC_START] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[PERC_START + 2] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[PERC_START + 1] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[BASS_START] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
+  p[BASS_START + 1] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[MELODY_BASE_ROW]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0]);
   patterns.push(p);
 
   // P4 — Full groove, add open HH + clap
   p = empty();
-  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[19] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[17] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[20] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[12] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
-  p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[0]  = R([1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
-  p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
+  p[PERC_START] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[PERC_START + 2] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[PERC_START + 3] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[PERC_START + 1] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[PERC_START + 4] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[BASS_START] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
+  p[BASS_START + 1] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[MELODY_BASE_ROW]  = R([1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
   patterns.push(p);
 
   // P5 — Melody variation: add movement
   p = empty();
-  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[19] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[17] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[20] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[12] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
-  p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[0]  = R([1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
-  p[1]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0]);
-  p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
-  p[3]  = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
-  p[4]  = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[PERC_START] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[PERC_START + 2] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[PERC_START + 3] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[PERC_START + 1] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[PERC_START + 4] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[BASS_START] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
+  p[BASS_START + 1] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[MELODY_BASE_ROW]  = R([1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 1]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
+  p[MELODY_BASE_ROW + 3]  = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 4]  = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 1,0,0,0]);
   patterns.push(p);
 
   // P6 — Fill: tom roll, busy rhythm
   p = empty();
-  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[19] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[17] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[20] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[12] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
-  p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[21] = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 1,1,1,1]);
-  p[0]  = R([1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
-  p[1]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0]);
-  p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
-  p[3]  = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
-  p[4]  = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[PERC_START] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[PERC_START + 2] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[PERC_START + 3] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[PERC_START + 1] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[PERC_START + 4] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[BASS_START] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
+  p[BASS_START + 1] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[PERC_START + 5] = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 1,1,1,1]);
+  p[MELODY_BASE_ROW]  = R([1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 1]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
+  p[MELODY_BASE_ROW + 3]  = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 4]  = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 1,0,0,0]);
   patterns.push(p);
 
   // P7 — Breakdown: drop drums, bass + melody
   p = empty();
-  p[12] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
-  p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
-  p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0]);
-  p[4]  = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
-  p[7]  = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[BASS_START] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
+  p[BASS_START + 1] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[MELODY_BASE_ROW]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 4]  = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 7]  = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 1,0,0,0]);
   patterns.push(p);
 
   // P8 — Build up: bring HH back, add energy
   p = empty();
-  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[12] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
-  p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[0]  = R([1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
-  p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
-  p[4]  = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
+  p[PERC_START + 2] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[PERC_START] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[BASS_START] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
+  p[BASS_START + 1] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[MELODY_BASE_ROW]  = R([1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
+  p[MELODY_BASE_ROW + 4]  = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
   patterns.push(p);
 
   // P9 — Drop: full energy
   p = empty();
-  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[19] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[17] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[20] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[12] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
-  p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[14] = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
-  p[0]  = R([1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
-  p[1]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0]);
-  p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
-  p[3]  = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
-  p[4]  = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[5]  = R([0,0,0,0, 0,0,0,0, 0,0,1,0, 0,0,0,0]);
-  p[6]  = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,1,0]);
-  p[7]  = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1]);
+  p[PERC_START] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[PERC_START + 2] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[PERC_START + 3] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[PERC_START + 1] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[PERC_START + 4] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[BASS_START] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
+  p[BASS_START + 1] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[BASS_START + 2] = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW]  = R([1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 1]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
+  p[MELODY_BASE_ROW + 3]  = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 4]  = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[MELODY_BASE_ROW + 5]  = R([0,0,0,0, 0,0,0,0, 0,0,1,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 6]  = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,1,0]);
+  p[MELODY_BASE_ROW + 7]  = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1]);
   patterns.push(p);
 
   // P10 — Syncopated variation
   p = empty();
-  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[19] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[17] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[20] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[12] = R([1,0,0,1, 0,0,1,0, 1,0,0,1, 0,0,1,0]);
-  p[13] = R([0,0,1,0, 1,0,0,0, 0,0,1,0, 1,0,0,0]);
-  p[14] = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
-  p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,1,0, 0,0,0,0]);
-  p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
-  p[5]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0]);
+  p[PERC_START] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[PERC_START + 2] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[PERC_START + 3] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[PERC_START + 1] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[PERC_START + 4] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[BASS_START] = R([1,0,0,1, 0,0,1,0, 1,0,0,1, 0,0,1,0]);
+  p[BASS_START + 1] = R([0,0,1,0, 1,0,0,0, 0,0,1,0, 1,0,0,0]);
+  p[BASS_START + 2] = R([0,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW]  = R([1,0,0,0, 0,0,0,0, 0,0,1,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
+  p[MELODY_BASE_ROW + 5]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0]);
   patterns.push(p);
 
   // P11 — Fill: snare + tom rolls
   p = empty();
-  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
-  p[19] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[17] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,1,1,1]);
-  p[20] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[12] = R([1,0,0,1, 0,0,1,0, 1,0,0,1, 0,0,1,0]);
-  p[13] = R([0,0,1,0, 1,0,0,0, 0,0,1,0, 1,0,0,0]);
-  p[21] = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 1,1,1,1]);
-  p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,1,0, 0,0,0,0]);
-  p[2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
-  p[5]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0]);
+  p[PERC_START] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[PERC_START + 2] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[PERC_START + 3] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[PERC_START + 1] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,1,1,1]);
+  p[PERC_START + 4] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[BASS_START] = R([1,0,0,1, 0,0,1,0, 1,0,0,1, 0,0,1,0]);
+  p[BASS_START + 1] = R([0,0,1,0, 1,0,0,0, 0,0,1,0, 1,0,0,0]);
+  p[PERC_START + 5] = R([0,0,0,0, 0,0,0,0, 0,0,0,0, 1,1,1,1]);
+  p[MELODY_BASE_ROW]  = R([1,0,0,0, 0,0,0,0, 0,0,1,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW + 2]  = R([0,0,0,0, 0,0,1,0, 0,0,0,0, 0,0,1,0]);
+  p[MELODY_BASE_ROW + 5]  = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 0,0,0,0]);
   patterns.push(p);
 
   // P12 — Sparse: kick + bass + melody
   p = empty();
-  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[12] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
-  p[13] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
-  p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
+  p[PERC_START] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[BASS_START] = R([1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]);
+  p[BASS_START + 1] = R([0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]);
+  p[MELODY_BASE_ROW]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
   patterns.push(p);
 
   // P13 — Kick only
   p = empty();
-  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[PERC_START] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
   patterns.push(p);
 
   // P14 — Kick + HH closed
   p = empty();
-  p[16] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
-  p[18] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
+  p[PERC_START] = R([1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]);
+  p[PERC_START + 2] = R([1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]);
   patterns.push(p);
 
   // P15 — Single note loop point
   p = empty();
-  p[16] = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
-  p[0]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
+  p[PERC_START] = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
+  p[MELODY_BASE_ROW]  = R([1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]);
   patterns.push(p);
 
   for (let pIdx = 0; pIdx < MAX_PATTERNS; pIdx++) {

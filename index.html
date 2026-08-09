@@ -165,6 +165,39 @@
 
 <div class="context-menu" id="ctxMenu"></div>
 
+<div class="seq-menu" id="seqMenu">
+  <div class="seq-menu-bar">
+    <button class="seq-menu-item" type="button" data-panel="file">File</button>
+    <button class="seq-menu-item" type="button" data-panel="view">View</button>
+    <div class="seq-menu-subwrap">
+      <button class="seq-menu-item" type="button" id="seqMenuHelpers">Helpers ▸</button>
+      <div class="seq-menu-sub" id="seqMenuSub">
+        <button class="seq-menu-item" type="button" data-panel="scale">Scale Highlight</button>
+      </div>
+    </div>
+    <button class="seq-menu-item" type="button" data-panel="clear">Clear</button>
+  </div>
+  <div class="seq-menu-view">
+    <div class="seq-menu-panel" data-panel="file"><div class="seq-menu-empty">—</div></div>
+    <div class="seq-menu-panel" data-panel="view"><div class="seq-menu-empty">—</div></div>
+    <div class="seq-menu-panel" data-panel="clear"><div class="seq-menu-empty">—</div></div>
+    <div class="seq-menu-panel" data-panel="scale">
+      <div class="seq-menu-section">
+        <div class="seq-menu-header">Scale Highlighting</div>
+        <label class="seq-menu-toggle">
+          <span>Enable</span>
+          <input type="checkbox" id="scaleHLToggle">
+          <span class="seq-menu-switch"></span>
+        </label>
+        <div class="seq-menu-label">Root</div>
+        <div class="seq-menu-roots" id="scaleRootPicker"></div>
+        <div class="seq-menu-label">Scale</div>
+        <div class="seq-menu-scales" id="scaleTypePicker"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
   <script src="sample-engine.js"></script>
 <script src="sample-browser.js"></script>
 <script src="script.js"></script>
