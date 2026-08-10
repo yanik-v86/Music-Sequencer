@@ -27,7 +27,7 @@
     <div class="sidebar-actions">
       <button class="sidebar-btn" id="newProjectBtn">+ New Project</button>
     </div>
-    <div class="sidebar-section">
+    <div class="sidebar-section" id="samplesSection">
       <div class="sidebar-heading">Samples</div>
       <div class="sample-browser" id="sampleBrowser">
         <div class="sample-browser-header">
@@ -82,6 +82,12 @@
           <option value="2">1/8</option>
           <option value="4">1/4</option>
           <option value="0">off</option>
+        </select></label>
+        <label class="quant-label" id="stepsLabel">steps <select id="stepsSelect">
+          <option value="16">16</option>
+          <option value="32">32</option>
+          <option value="64">64</option>
+          <option value="128">128</option>
         </select></label>
         <div class="looper-actions">
           <button class="copy-btn" id="copyBtn">Copy →</button>
@@ -179,7 +185,33 @@
   </div>
   <div class="seq-menu-view">
     <div class="seq-menu-panel" data-panel="file"><div class="seq-menu-empty">—</div></div>
-    <div class="seq-menu-panel" data-panel="view"><div class="seq-menu-empty">—</div></div>
+    <div class="seq-menu-panel" data-panel="view">
+      <div class="seq-menu-section">
+        <div class="seq-menu-header">Width</div>
+        <div class="seq-menu-scales" style="grid-template-columns:1fr 1fr">
+          <button class="seq-menu-opt" type="button" id="layoutCenterBtn">Centered</button>
+          <button class="seq-menu-opt" type="button" id="layoutFullBtn">Full</button>
+        </div>
+      </div>
+      <div class="seq-menu-section">
+        <div class="seq-menu-header">Show</div>
+        <label class="seq-menu-toggle">
+          <span>Bass</span>
+          <input type="checkbox" id="viewBassToggle" checked>
+          <span class="seq-menu-switch"></span>
+        </label>
+        <label class="seq-menu-toggle">
+          <span>Percussion</span>
+          <input type="checkbox" id="viewPercToggle" checked>
+          <span class="seq-menu-switch"></span>
+        </label>
+        <label class="seq-menu-toggle">
+          <span>Samples</span>
+          <input type="checkbox" id="viewSamplesToggle" checked>
+          <span class="seq-menu-switch"></span>
+        </label>
+      </div>
+    </div>
     <div class="seq-menu-panel" data-panel="clear"><div class="seq-menu-empty">—</div></div>
     <div class="seq-menu-panel" data-panel="scale">
       <div class="seq-menu-section">

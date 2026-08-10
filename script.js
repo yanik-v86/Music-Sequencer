@@ -1,5 +1,6 @@
 const ROOT_FREQ = 261.63;
-const STEPS = 16;
+let patternSteps = 16;
+const PATTERN_STEP_OPTIONS = [16, 32, 64, 128];
 const MAX_PATTERNS = 16;
 
 const SCALES = {
@@ -68,7 +69,7 @@ const SECTION_RANGES = {
   percussion: [PERC_START, PERC_START + PERC_TRACK_COUNT],
 };
 
-let pattern = Array.from({length:TRACK_COUNT}, () => Array(STEPS).fill(0));
+let pattern = Array.from({length:TRACK_COUNT}, () => Array(patternSteps).fill(0));
 let muted = new Array(TRACK_COUNT).fill(false);
 let trackOverrides = new Array(TRACK_COUNT).fill(null);
 let trackVolumes = new Array(TRACK_COUNT).fill(1.0);
@@ -89,6 +90,10 @@ let previewEnabled = true;
 let metronomeEnabled = false;
 let metronomeVolume = 0.4;
 let quantizeStepSize = 1;
+let layoutFullWidth = false;
+let showBass = true;
+let showPerc = true;
+let showSamples = true;
 let recordedEvents = [];
 let isRecording = false;
 let recordStartTime = 0;
@@ -137,7 +142,7 @@ let timerID = null;
 const SCHEDULE_AHEAD = 0.1;
 
 for (let p = 0; p < MAX_PATTERNS; p++) {
-  patternBank.push(Array.from({length:TRACK_COUNT}, () => Array(STEPS).fill(0)));
+  patternBank.push(Array.from({length:TRACK_COUNT}, () => Array(patternSteps).fill(0)));
   patternTrackVolumes.push(new Array(TRACK_COUNT).fill(1.0));
 }
 
@@ -1167,11 +1172,11 @@ function schedule() {
 
   while (nextNoteTime < now + SCHEDULE_AHEAD) {
     const prevStep = scheduleStep;
-    scheduleStep = (scheduleStep + 1) % STEPS;
+    scheduleStep = (scheduleStep + 1) % patternSteps;
     const t = nextNoteTime;
 
     // Apply queued changes at loop boundary (wrap from last step to first)
-    if (prevStep === STEPS - 1 && scheduleStep === 0) {
+    if (prevStep === patternSteps - 1 && scheduleStep === 0) {
       if (pendingPatternIdx !== null) {
         loadPattern(pendingPatternIdx);
         pendingPatternIdx = null;
@@ -1281,9 +1286,12 @@ function schedule() {
 
     if (scheduleStep !== displayStep) {
       displayStep = scheduleStep;
-      requestAnimationFrame(() => renderPlayhead());
+      requestAnimationFrame(() => {
+        renderPlayhead();
+        scrollPlayheadIntoView();
+      });
     }
-    stepDisplay.textContent = (displayStep + 1) + '/' + STEPS;
+    stepDisplay.textContent = (displayStep + 1) + '/' + patternSteps;
     nextNoteTime += stepDuration;
   }
 
@@ -1680,7 +1688,7 @@ function initRecording() {
 
 function saveCurrentPattern() {
   for (let r = 0; r < TRACK_COUNT; r++)
-    for (let c = 0; c < STEPS; c++)
+    for (let c = 0; c < patternSteps; c++)
       patternBank[currentPatternIdx][r][c] = pattern[r][c];
   patternMoods[currentPatternIdx] = parseInt(moodSelect.value);
   patternOctaves[currentPatternIdx] = octaveShift;
@@ -1699,11 +1707,11 @@ function loadPattern(idx, skipSave = false) {
   if (!skipSave) saveCurrentPatternToProject();
   const src = patternBank[idx];
   for (let r = 0; r < TRACK_COUNT; r++)
-    for (let c = 0; c < STEPS; c++)
+    for (let c = 0; c < patternSteps; c++)
       pattern[r][c] = src[r][c];
   trackVolumes = patternTrackVolumes[idx];
   for (let r = 0; r < TRACK_COUNT; r++)
-    for (let c = 0; c < STEPS; c++)
+    for (let c = 0; c < patternSteps; c++)
       updateCell(r, c);
   moodSelect.value = patternMoods[idx];
   applyMood(MOODS[patternMoods[idx]]);
@@ -1728,27 +1736,14 @@ function loadPattern(idx, skipSave = false) {
 let autoSave = function(){};
 
 const grid = document.getElementById('grid');
-const fragment = document.createDocumentFragment();
 
-const headerDiv = document.createElement('div');
-headerDiv.className = 'grid-header';
-const corner = document.createElement('div');
-corner.className = 'step-num';
-const seqMenuBtn = document.createElement('button');
-seqMenuBtn.id = 'seq-menu';
-seqMenuBtn.className = 'seq-menu-btn';
-seqMenuBtn.type = 'button';
-seqMenuBtn.textContent = '▾ Menu';
-seqMenuBtn.title = 'Menu';
-corner.appendChild(seqMenuBtn);
-headerDiv.appendChild(corner);
-for (let c = 0; c < STEPS; c++) {
-  const el = document.createElement('div');
-  el.className = 'step-num';
-  el.textContent = (c % 4 === 0) ? '' + (Math.floor(c / 4) + 1) : '';
-  headerDiv.appendChild(el);
-}
-fragment.appendChild(headerDiv);
+let cellElements = [];
+let trackLabelElements = [];
+let sectionMuteButtons = {};
+let melodyScroll = null;
+let melodyLabels = null;
+let prevType = null;
+let seqMenuBtn = null;
 
 const sectionInfo = {
   melody:     { badge: 'Melody', cls: 'badge-melody' },
@@ -1756,32 +1751,82 @@ const sectionInfo = {
   percussion: { badge: 'Percussion', cls: 'badge-perc' },
 };
 
-let prevType = null;
-let melodyScroll = null;
-const cellElements = [];
-const trackLabelElements = [];
-const sectionMuteButtons = {};
-
 const typeToSection = { melody:'melody', bass:'bass', perc:'percussion' };
 
-TRACKS.forEach((track, r) => {
+function gridMetrics() {
+  const gridRect = grid.getBoundingClientRect();
+  const c0 = getCellEl(0, 0);
+  const r0 = c0 ? c0.getBoundingClientRect() : null;
+  if (!r0 || r0.width === 0) return { left: gridRect.left, labelW: 0, cellW: 34 };
+  return { left: gridRect.left, labelW: r0.left - gridRect.left, cellW: r0.width };
+}
+
+function buildGrid() {
+  grid.innerHTML = '';
+  cellElements.length = 0;
+  trackLabelElements.length = 0;
+  for (const k in sectionMuteButtons) delete sectionMuteButtons[k];
+  melodyScroll = null;
+  melodyLabels = null;
+  prevType = null;
+
+  const gridWrap = document.querySelector('.grid-wrap');
+  gridWrap.style.setProperty('--grid-steps', patternSteps);
+
+  // Two panes: fixed first column (labels) + horizontally scrollable cells body
+  const labelsPane = document.createElement('div');
+  labelsPane.className = 'grid-labels';
+  const bodyWrap = document.createElement('div');
+  bodyWrap.className = 'grid-body';
+  gridWrap.innerHTML = '';
+  gridWrap.appendChild(labelsPane);
+  gridWrap.appendChild(bodyWrap);
+  bodyWrap.appendChild(grid);
+
+  const labelsFragment = document.createDocumentFragment();
+  const bodyFragment = document.createDocumentFragment();
+
+  const corner = document.createElement('div');
+  corner.className = 'step-num corner';
+  seqMenuBtn = document.createElement('button');
+  seqMenuBtn.id = 'seq-menu';
+  seqMenuBtn.className = 'seq-menu-btn';
+  seqMenuBtn.type = 'button';
+  seqMenuBtn.textContent = '▾ Menu';
+  seqMenuBtn.title = 'Menu';
+  corner.appendChild(seqMenuBtn);
+  labelsFragment.appendChild(corner);
+
+  const headerDiv = document.createElement('div');
+  headerDiv.className = 'grid-header';
+  for (let c = 0; c < patternSteps; c++) {
+    const el = document.createElement('div');
+    el.className = 'step-num';
+    el.textContent = (c % 4 === 0) ? '' + (Math.floor(c / 4) + 1) : '';
+    headerDiv.appendChild(el);
+  }
+  bodyFragment.appendChild(headerDiv);
+
+  TRACKS.forEach((track, r) => {
   if (!prevType || track.type !== prevType) {
-    const div = document.createElement('div');
-    div.className = 'section-divider';
-    div.style.gridColumn = '1 / -1';
     const sec = typeToSection[track.type];
     const info = sectionInfo[sec];
-    div.innerHTML = `<span class="badge ${info.cls}">${info.badge}</span>`;
-    div.addEventListener('contextmenu', (e) => {
+
+    const divLeft = document.createElement('div');
+    divLeft.className = 'section-divider div-left';
+    divLeft.dataset.section = sec;
+    divLeft.innerHTML = `<span class="badge ${info.cls}">${info.badge}</span>`;
+    divLeft.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       e.stopPropagation();
       showSectionCtxMenu(sec, e.clientX, e.clientY);
     });
+    labelsFragment.appendChild(divLeft);
+
     const muteBtn = document.createElement('button');
     muteBtn.className = 'section-mute';
     muteBtn.textContent = 'On';
     muteBtn.dataset.section = sec;
-    div.dataset.section = sec;
     muteBtn.addEventListener('click', () => {
       sectionMuted[sec] = !sectionMuted[sec];
       muteBtn.classList.toggle('is-muted', sectionMuted[sec]);
@@ -1789,26 +1834,54 @@ TRACKS.forEach((track, r) => {
       updateSectionMuteVisual(sec);
       autoSave();
     });
-    div.appendChild(muteBtn);
     sectionMuteButtons[sec] = muteBtn;
-    fragment.appendChild(div);
+
+    const divBody = document.createElement('div');
+    divBody.className = 'section-divider div-body';
+    divBody.style.gridColumn = '1 / -1';
+    divBody.dataset.section = sec;
+    divBody.appendChild(muteBtn);
+    divBody.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showSectionCtxMenu(sec, e.clientX, e.clientY);
+    });
+    bodyFragment.appendChild(divBody);
+
     // Melody rows live in their own scrollable block (piano-roll style)
     if (track.type === 'melody' && !melodyScroll) {
       melodyScroll = document.createElement('div');
       melodyScroll.className = 'melody-scroll';
       melodyScroll.style.gridColumn = '1 / -1';
-      fragment.appendChild(melodyScroll);
+      bodyFragment.appendChild(melodyScroll);
+
+      melodyLabels = document.createElement('div');
+      melodyLabels.className = 'melody-labels';
+      labelsFragment.appendChild(melodyLabels);
+
+      melodyScroll.addEventListener('scroll', () => {
+        if (melodyLabels && melodyLabels.scrollTop !== melodyScroll.scrollTop) {
+          melodyLabels.scrollTop = melodyScroll.scrollTop;
+        }
+      });
+      melodyLabels.addEventListener('scroll', () => {
+        if (melodyScroll && melodyScroll.scrollTop !== melodyLabels.scrollTop) {
+          melodyScroll.scrollTop = melodyLabels.scrollTop;
+        }
+      });
     }
   }
   prevType = track.type;
 
-  const rowParent = (track.type === 'melody' && melodyScroll) ? melodyScroll : fragment;
+  const rowParent = (track.type === 'melody' && melodyScroll) ? melodyScroll : bodyFragment;
+  const labelParent = (track.type === 'melody' && melodyLabels) ? melodyLabels : labelsFragment;
 
   const isBlackKey = track.type === 'melody' && [1, 3, 6, 8, 10].includes(pitchClass(track.freqIdx));
 
   const label = document.createElement('div');
   label.className = 'track-label';
   label.dataset.trackRow = r;
+  label.dataset.section = typeToSection[track.type];
   if (track.type === 'melody') label.classList.add(isBlackKey ? 'key-black' : 'key-white');
 
   const volBar = document.createElement('div');
@@ -1868,14 +1941,16 @@ TRACKS.forEach((track, r) => {
     e.stopPropagation();
     showCtxMenu(r, e.clientX, e.clientY);
   });
-  rowParent.appendChild(label);
+  labelParent.appendChild(label);
   trackLabelElements.push(label);
 
   const cells = [];
-  for (let c = 0; c < STEPS; c++) {
+  for (let c = 0; c < patternSteps; c++) {
     const cell = document.createElement('div');
     cell.className = 'cell';
+    if (c % 4 === 0) cell.classList.add('beat');
     cell.dataset.trackRow = r;
+    cell.dataset.section = typeToSection[track.type];
     if (track.type === 'melody') cell.classList.add(isBlackKey ? 'key-black' : 'key-white');
     const gateLabel = document.createElement('span');
     gateLabel.className = 'gate-label';
@@ -1898,7 +1973,7 @@ TRACKS.forEach((track, r) => {
       autoSave();
       if (previewEnabled && pattern[r][targetCol]) previewCell(r, targetCol);
       if (isRecording && playing && pattern[r][targetCol]) {
-        const pos = ((scheduleStep >= 0 ? scheduleStep : 0) + 1) % STEPS;
+        const pos = ((scheduleStep >= 0 ? scheduleStep : 0) + 1) % patternSteps;
         const quantPos = quantizeStep(pos);
         recordedEvents.push({ track: r, step: quantPos });
         updateTimelineCell(r, quantPos, true);
@@ -1942,7 +2017,8 @@ cell.addEventListener('mousedown', (e) => {
   label.addEventListener('mouseenter', () => highlightRow(r, true));
   label.addEventListener('mouseleave', () => highlightRow(r, false));
 });
-grid.appendChild(fragment);
+labelsPane.appendChild(labelsFragment);
+grid.appendChild(bodyFragment);
 
 // Open the melody scroll roughly around C4 (row MELODY_BASE_ROW)
 if (melodyScroll) {
@@ -1954,31 +2030,107 @@ if (melodyScroll) {
       before += ([1, 3, 6, 8, 10].includes(pc) ? keyHeights.black : keyHeights.white);
     }
     melodyScroll.scrollTop = Math.max(0, before - 150);
+    if (melodyLabels) melodyLabels.scrollTop = melodyScroll.scrollTop;
   });
 }
 
+if (seqMenuBtn) {
+  seqMenuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = seqMenu.classList.toggle('open');
+    if (open) {
+      const rect = seqMenuBtn.getBoundingClientRect();
+      seqMenu.style.left = Math.min(rect.left, window.innerWidth - seqMenu.offsetWidth - 8) + 'px';
+      seqMenu.style.top = (rect.bottom + 6) + 'px';
+      showSeqPanel(seqPanel);
+    }
+  });
+}
+
+renderPlayhead();
+for (let r = 0; r < TRACK_COUNT; r++) updateRowMuteVisual(r);
+for (const sec of ['melody','bass','percussion']) {
+  const btn = sectionMuteButtons[sec];
+  if (btn) { btn.classList.toggle('is-muted', sectionMuted[sec]); btn.textContent = sectionMuted[sec] ? 'Off' : 'On'; }
+}
+updateGhostNotes();
+applyScaleHighlight();
+updateQuantGrid();
+updateVolumeBars();
+updateAllTrackSoundLabels();
+const ssEl = document.getElementById('stepsSelect');
+if (ssEl) ssEl.value = patternSteps;
+}
+
+buildGrid();
+
 function getCellEl(row, col) {
-  return cellElements[row][col];
+  return cellElements[row] ? cellElements[row][col] : null;
+}
+
+function resizePatternArray(arr, len) {
+  for (let r = 0; r < arr.length; r++) {
+    const old = arr[r] || [];
+    const next = new Array(len).fill(0);
+    for (let c = 0; c < Math.min(old.length, len); c++) next[c] = old[c];
+    arr[r] = next;
+  }
+}
+
+function setPatternSteps(n) {
+  if (!PATTERN_STEP_OPTIONS.includes(n) || n === patternSteps) return;
+  stopPlayback();
+  saveCurrentPattern();
+  patternSteps = n;
+  resizePatternArray(pattern, n);
+  for (let p = 0; p < MAX_PATTERNS; p++) resizePatternArray(patternBank[p], n);
+  const wrap = document.querySelector('.grid-body');
+  buildGrid();
+  if (wrap) wrap.scrollLeft = 0;
+  updatePatNoteIndicators();
+  updateTimelineGridForQuant();
+  autoSave();
+}
+
+function scrollPlayheadIntoView() {
+  const wrap = document.querySelector('.grid-body');
+  if (!wrap || displayStep < 0) return;
+  const cell = getCellEl(0, displayStep);
+  if (!cell) return;
+  const cellRect = cell.getBoundingClientRect();
+  const wrapRect = wrap.getBoundingClientRect();
+  if (cellRect.left < wrapRect.left) {
+    wrap.scrollLeft -= (wrapRect.left - cellRect.left) + 10;
+  } else if (cellRect.right > wrapRect.right) {
+    wrap.scrollLeft += (cellRect.right - wrapRect.right) + 10;
+  }
+}
+
+const stepsSelect = document.getElementById('stepsSelect');
+if (stepsSelect) {
+  stepsSelect.addEventListener('change', () => {
+    setPatternSteps(parseInt(stepsSelect.value, 10) || 16);
+  });
 }
 
 function updateSectionMuteVisual(sec) {
   const [start, end] = SECTION_RANGES[sec];
   for (let r = start; r < end; r++) {
-    for (let c = 0; c < STEPS; c++) {
+    for (let c = 0; c < patternSteps; c++) {
       getCellEl(r, c).classList.toggle('section-muted', sectionMuted[sec]);
     }
   }
 }
 
 function updateRowMuteVisual(r) {
-  for (let c = 0; c < STEPS; c++) {
+  for (let c = 0; c < patternSteps; c++) {
     getCellEl(r, c).classList.toggle('track-muted', muted[r]);
   }
 }
 
 function highlightRow(r, on) {
   const cls = 'row-hover';
-  for (let c = 0; c < STEPS; c++) {
+  for (let c = 0; c < patternSteps; c++) {
     getCellEl(r, c).classList.toggle(cls, on);
   }
 }
@@ -2091,7 +2243,7 @@ function clearGateDrag() {
   dragType = null;
   dragActive = false;
   dragOccurred = false;
-  for (let c = 0; c < STEPS; c++) {
+  for (let c = 0; c < patternSteps; c++) {
     for (let r = 0; r < TRACK_COUNT; r++) {
       const el = getCellEl(r, c);
       el.classList.remove('drag-preview', 'drag-origin', 'drag-ghost', 'drag-target');
@@ -2213,7 +2365,7 @@ document.addEventListener('click', (e) => {
 document.addEventListener('mousemove', (e) => {
   if (!dragActive || dragRow == null) return;
   for (let r = 0; r < TRACK_COUNT; r++) {
-    for (let c = 0; c < STEPS; c++) {
+    for (let c = 0; c < patternSteps; c++) {
       const el = getCellEl(r, c);
       el.classList.remove('drag-preview', 'drag-origin', 'drag-ghost', 'drag-target');
       const label = el.querySelector('.gate-label');
@@ -2221,19 +2373,19 @@ document.addEventListener('mousemove', (e) => {
     }
   }
   const grid = document.getElementById('grid');
-  const gridRect = grid.getBoundingClientRect();
-  const cellWidth = (gridRect.width - 170) / STEPS;
+  const gm = gridMetrics();
+  const cellWidth = gm.cellW;
   const baseGate = pattern[dragRow][dragCol] || 1;
   if (dragType === 'gate') {
-    const leftEdgeX = gridRect.left + 170 + dragCol * cellWidth;
+    const leftEdgeX = gm.left + gm.labelW + dragCol * cellWidth;
     let startCol, endCol, curGate;
     if (dragEdge === 'left') {
       const offset = e.clientX - leftEdgeX;
       const extraSteps = Math.ceil(offset / cellWidth - 0.5);
       startCol = dragCol + extraSteps;
       endCol = dragCol + baseGate - 1;
-      curGate = Math.max(1, Math.min(16, endCol - startCol + 1));
-      for (let c = Math.max(0, startCol); c <= Math.min(endCol, STEPS - 1); c++) {
+      curGate = Math.max(1, Math.min(patternSteps, endCol - startCol + 1));
+      for (let c = Math.max(0, startCol); c <= Math.min(endCol, patternSteps - 1); c++) {
         const el = getCellEl(dragRow, c);
         el.classList.add('drag-preview');
         if (c === Math.max(0, startCol)) el.classList.add('drag-origin');
@@ -2242,11 +2394,11 @@ document.addEventListener('mousemove', (e) => {
       }
       if (curGate !== baseGate) dragOccurred = true;
     } else {
-      const endRightEdgeX = gridRect.left + 170 + (dragEndCol + 1) * cellWidth;
+      const endRightEdgeX = gm.left + gm.labelW + (dragEndCol + 1) * cellWidth;
       const offset = e.clientX - endRightEdgeX;
       const extraSteps = Math.ceil(offset / cellWidth - 0.5);
-      curGate = Math.max(1, Math.min(16, baseGate + extraSteps));
-      for (let c = dragCol; c < dragCol + curGate && c < STEPS; c++) {
+      curGate = Math.max(1, Math.min(patternSteps, baseGate + extraSteps));
+      for (let c = dragCol; c < dragCol + curGate && c < patternSteps; c++) {
         const el = getCellEl(dragRow, c);
         el.classList.add('drag-preview');
         if (c === dragCol) el.classList.add('drag-origin');
@@ -2256,14 +2408,14 @@ document.addEventListener('mousemove', (e) => {
       if (curGate !== baseGate) dragOccurred = true;
     }
   } else if (dragType === 'move') {
-    const relX = e.clientX - gridRect.left - 170;
-    const targetCol = Math.max(0, Math.min(STEPS - 1, Math.floor(relX / cellWidth)));
+    const relX = e.clientX - gm.left - gm.labelW;
+    const targetCol = Math.max(0, Math.min(patternSteps - 1, Math.floor(relX / cellWidth)));
     const elUnder = document.elementFromPoint(e.clientX, e.clientY);
     const rowEl = elUnder?.closest?.('[data-track-row]');
     const rawRow = rowEl ? parseInt(rowEl.dataset.trackRow) : dragRow;
     const secRange = Object.values(SECTION_RANGES).find(r => dragRow >= r[0] && dragRow < r[1]) || [0, TRACK_COUNT];
     const targetRow = Math.max(secRange[0], Math.min(secRange[1] - 1, rawRow));
-    for (let c = dragCol; c < Math.min(STEPS, dragCol + baseGate); c++) {
+    for (let c = dragCol; c < Math.min(patternSteps, dragCol + baseGate); c++) {
       getCellEl(dragRow, c).classList.add('drag-ghost');
     }
     getCellEl(targetRow, targetCol).classList.add('drag-target');
@@ -2275,47 +2427,47 @@ document.addEventListener('mouseup', (e) => {
   if (!dragActive || dragRow == null) return;
   if (dragOccurred) {
     const grid = document.getElementById('grid');
-    const gridRect = grid.getBoundingClientRect();
-    const cellWidth = (gridRect.width - 170) / STEPS;
+    const gm = gridMetrics();
+    const cellWidth = gm.cellW;
     const baseGate = pattern[dragRow][dragCol] || 1;
     if (dragType === 'gate') {
-      const leftEdgeX = gridRect.left + 170 + dragCol * cellWidth;
+      const leftEdgeX = gm.left + gm.labelW + dragCol * cellWidth;
       let newGate, startCol;
       if (dragEdge === 'left') {
         const offset = e.clientX - leftEdgeX;
         const extraSteps = Math.ceil(offset / cellWidth - 0.5);
         startCol = Math.max(0, dragCol + extraSteps);
         const endCol = dragCol + baseGate - 1;
-        newGate = Math.max(1, Math.min(16, endCol - startCol + 1));
-        for (let c = startCol; c <= endCol && c < STEPS; c++) pattern[dragRow][c] = 0;
+        newGate = Math.max(1, Math.min(patternSteps, endCol - startCol + 1));
+        for (let c = startCol; c <= endCol && c < patternSteps; c++) pattern[dragRow][c] = 0;
         pattern[dragRow][startCol] = newGate;
       } else {
-        const endRightEdgeX = gridRect.left + 170 + (dragEndCol + 1) * cellWidth;
+        const endRightEdgeX = gm.left + gm.labelW + (dragEndCol + 1) * cellWidth;
         const offset = e.clientX - endRightEdgeX;
         const extraSteps = Math.ceil(offset / cellWidth - 0.5);
-        newGate = Math.max(1, Math.min(16, baseGate + extraSteps));
-        for (let c = dragCol; c < dragCol + newGate && c < STEPS; c++) pattern[dragRow][c] = 0;
+        newGate = Math.max(1, Math.min(patternSteps, baseGate + extraSteps));
+        for (let c = dragCol; c < dragCol + newGate && c < patternSteps; c++) pattern[dragRow][c] = 0;
         pattern[dragRow][dragCol] = newGate;
       }
-      for (let c = 0; c < STEPS; c++) updateCell(dragRow, c);
+      for (let c = 0; c < patternSteps; c++) updateCell(dragRow, c);
       updatePatNoteIndicators();
       defaultGate = newGate;
       autoSave();
     } else if (dragType === 'move') {
-      const relX = e.clientX - gridRect.left - 170;
-      const targetCol = Math.max(0, Math.min(STEPS - 1, Math.floor(relX / cellWidth)));
+      const relX = e.clientX - gm.left - gm.labelW;
+      const targetCol = Math.max(0, Math.min(patternSteps - 1, Math.floor(relX / cellWidth)));
       const elUnder = document.elementFromPoint(e.clientX, e.clientY);
       const rowEl = elUnder?.closest?.('[data-track-row]');
       const rawRow = rowEl ? parseInt(rowEl.dataset.trackRow) : dragRow;
       const secRange = Object.values(SECTION_RANGES).find(r => dragRow >= r[0] && dragRow < r[1]) || [0, TRACK_COUNT];
       const targetRow = Math.max(secRange[0], Math.min(secRange[1] - 1, rawRow));
       if (targetRow !== dragRow || targetCol !== dragCol) {
-        for (let c = dragCol; c < Math.min(STEPS, dragCol + baseGate); c++) pattern[dragRow][c] = 0;
-        for (let c = targetCol; c < Math.min(STEPS, targetCol + baseGate); c++) pattern[targetRow][c] = 0;
+        for (let c = dragCol; c < Math.min(patternSteps, dragCol + baseGate); c++) pattern[dragRow][c] = 0;
+        for (let c = targetCol; c < Math.min(patternSteps, targetCol + baseGate); c++) pattern[targetRow][c] = 0;
         pattern[targetRow][targetCol] = baseGate;
-        for (let c = 0; c < STEPS; c++) updateCell(dragRow, c);
+        for (let c = 0; c < patternSteps; c++) updateCell(dragRow, c);
         if (targetRow !== dragRow) {
-          for (let c = 0; c < STEPS; c++) updateCell(targetRow, c);
+          for (let c = 0; c < patternSteps; c++) updateCell(targetRow, c);
         }
         updatePatNoteIndicators();
         autoSave();
@@ -2415,7 +2567,7 @@ function updateCell(row, col) {
 }
 
 function updateRowGateVisual(row) {
-  for (let c = 0; c < STEPS; c++) {
+  for (let c = 0; c < patternSteps; c++) {
     const el = getCellEl(row, c);
     el.classList.remove('gate-sust', 'gate-end');
   }
@@ -2424,13 +2576,13 @@ function updateRowGateVisual(row) {
     : track.type === 'bass' ? ['#7d9a7a','#8aaa7a','#6a8a6a','#9aba8a']
     : ['#c99a4a','#d4aa5a','#b88a3a','#e0b86a'];
   const color = palette[row % palette.length];
-  for (let c = 0; c < STEPS; c++) {
+  for (let c = 0; c < patternSteps; c++) {
     const gate = pattern[row][c];
     if (gate > 0) {
-      getCellEl(row, Math.min(STEPS - 1, c + gate - 1)).classList.add('gate-end');
+      getCellEl(row, Math.min(patternSteps - 1, c + gate - 1)).classList.add('gate-end');
     }
     if (gate > 1) {
-      for (let e = c + 1; e < Math.min(STEPS, c + gate); e++) {
+      for (let e = c + 1; e < Math.min(patternSteps, c + gate); e++) {
         if (pattern[row][e] === 0) {
           const el = getCellEl(row, e);
           el.classList.add('gate-sust');
@@ -2443,14 +2595,14 @@ function updateRowGateVisual(row) {
 
 function updateGhostNotes() {
   for (let r = 0; r < TRACK_COUNT; r++) {
-    for (let c = 0; c < STEPS; c++) {
+    for (let c = 0; c < patternSteps; c++) {
       getCellEl(r, c).classList.remove('ghost');
     }
   }
   if (overdubMode && currentPatternIdx !== overdubReturnPattern) {
     const playPat = patternBank[overdubReturnPattern];
     for (let r = 0; r < TRACK_COUNT; r++) {
-      for (let c = 0; c < STEPS; c++) {
+      for (let c = 0; c < patternSteps; c++) {
         if (playPat[r][c] && !pattern[r][c]) {
           const cell = getCellEl(r, c);
           cell.classList.add('ghost');
@@ -2466,7 +2618,7 @@ function updateGhostNotes() {
 }
 
 function renderPlayhead() {
-  for (let c = 0; c < STEPS; c++) {
+  for (let c = 0; c < patternSteps; c++) {
     const isActive = (c === displayStep);
     for (let r = 0; r < TRACK_COUNT; r++) {
       getCellEl(r, c).classList.toggle('playhead', isActive);
@@ -2477,9 +2629,10 @@ function renderPlayhead() {
 function applyMood(mood) {
   currentMood = mood;
   document.getElementById('moodTag').textContent = mood.label;
-  document.body.className = 'mood-' + mood.id;
+  document.body.classList.remove(...Array.from(document.body.classList).filter(c => c.startsWith('mood-')));
+  document.body.classList.add('mood-' + mood.id);
   for (let r = 0; r < TRACK_COUNT; r++)
-    for (let c = 0; c < STEPS; c++)
+    for (let c = 0; c < patternSteps; c++)
       updateCell(r, c);
   updateGhostNotes();
   applyScaleHighlight();
@@ -2528,7 +2681,7 @@ function applyScaleHighlight() {
     if (track.type !== 'melody') continue;
     if (!scaleHighlightEnabled) {
       if (label) label.classList.remove('scale-in', 'scale-out', 'scale-root');
-      for (let c = 0; c < STEPS; c++) getCellEl(r, c).classList.remove('scale-in', 'scale-root');
+      for (let c = 0; c < patternSteps; c++) getCellEl(r, c).classList.remove('scale-in', 'scale-root');
       continue;
     }
     const inScale = rowInScale(r);
@@ -2538,7 +2691,7 @@ function applyScaleHighlight() {
       label.classList.toggle('scale-in', inScale && !isRoot);
       label.classList.toggle('scale-out', !inScale);
     }
-    for (let c = 0; c < STEPS; c++) {
+    for (let c = 0; c < patternSteps; c++) {
       const cell = getCellEl(r, c);
       cell.classList.toggle('scale-root', isRoot);
       cell.classList.toggle('scale-in', inScale && !isRoot);
@@ -2550,7 +2703,7 @@ function applyScaleHighlight() {
 function randomPattern() {
   for (let r = 0; r < TRACK_COUNT; r++) {
     const density = TRACKS[r].type === 'perc' ? 0.35 : 0.25;
-    for (let c = 0; c < STEPS; c++) {
+    for (let c = 0; c < patternSteps; c++) {
       pattern[r][c] = Math.random() < density ? 1 : 0;
     }
   }
@@ -2560,17 +2713,17 @@ function randomPattern() {
   const snareIdx = TRACKS.findIndex((t, i) => currentSound(i) === 'snare');
   if (snareIdx >= 0) pattern[snareIdx] = [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0];
   for (let r = 0; r < TRACK_COUNT; r++)
-    for (let c = 0; c < STEPS; c++)
+    for (let c = 0; c < patternSteps; c++)
       updateCell(r, c);
   updatePatNoteIndicators();
 }
 
 function clearPattern() {
   for (let r = 0; r < TRACK_COUNT; r++)
-    for (let c = 0; c < STEPS; c++)
+    for (let c = 0; c < patternSteps; c++)
       pattern[r][c] = 0;
   for (let r = 0; r < TRACK_COUNT; r++)
-    for (let c = 0; c < STEPS; c++)
+    for (let c = 0; c < patternSteps; c++)
       updateCell(r, c);
   updatePatNoteIndicators();
 }
@@ -2579,6 +2732,7 @@ function exportPattern() {
   saveCurrentPattern();
   const data = {
     version: 4,
+    steps: patternSteps,
     bpm, mood: currentMood.id,
     patterns: patternBank,
     patternTrackVolumes: patternTrackVolumes.map(v => Array.from(v)),
@@ -2604,11 +2758,14 @@ function importPattern(file) {
     try {
       const data = JSON.parse(e.target.result);
       migrateLegacyData(data);
+      if (PATTERN_STEP_OPTIONS.includes(data.steps) && data.steps !== patternSteps) {
+        setPatternSteps(data.steps);
+      }
       if (data.version >= 2 && data.patterns) {
         for (let p = 0; p < Math.min(MAX_PATTERNS, data.patterns.length); p++) {
           const src = data.patterns[p];
           for (let r = 0; r < Math.min(TRACK_COUNT, src.length); r++)
-            for (let c = 0; c < Math.min(STEPS, src[r].length); c++)
+            for (let c = 0; c < Math.min(patternSteps, src[r].length); c++)
               patternBank[p][r][c] = src[r][c] ? +src[r][c] : 0;
           if (data.version >= 3 && data.patternMoods && data.patternMoods[p]) {
             const mi = MOODS.findIndex(m => m.id === data.patternMoods[p]);
@@ -2651,10 +2808,10 @@ function importPattern(file) {
         }
       } else if (data.pattern) {
         for (let r = 0; r < Math.min(TRACK_COUNT, data.pattern.length); r++)
-          for (let c = 0; c < Math.min(STEPS, data.pattern[r].length); c++)
+          for (let c = 0; c < Math.min(patternSteps, data.pattern[r].length); c++)
             pattern[r][c] = data.pattern[r][c] ? +data.pattern[r][c] : 0;
         for (let r = 0; r < TRACK_COUNT; r++)
-          for (let c = 0; c < STEPS; c++)
+          for (let c = 0; c < patternSteps; c++)
             updateCell(r, c);
       }
       if (data.bpm) {
@@ -2701,11 +2858,11 @@ function buildPatButtons() {
           currentPatternIdx = idx;
           const src = patternBank[idx];
           for (let r = 0; r < TRACK_COUNT; r++)
-            for (let c = 0; c < STEPS; c++)
+            for (let c = 0; c < patternSteps; c++)
               pattern[r][c] = src[r][c];
           trackVolumes = patternTrackVolumes[idx];
           for (let r = 0; r < TRACK_COUNT; r++)
-            for (let c = 0; c < STEPS; c++)
+            for (let c = 0; c < patternSteps; c++)
               updateCell(r, c);
           moodSelect.value = patternMoods[idx];
           applyMood(MOODS[patternMoods[idx]]);
@@ -2925,7 +3082,7 @@ copyBtn.addEventListener('click', () => {
   copyTarget = (currentPatternIdx + 1) % MAX_PATTERNS;
   saveCurrentPattern();
   for (let r = 0; r < TRACK_COUNT; r++)
-    for (let c = 0; c < STEPS; c++)
+    for (let c = 0; c < patternSteps; c++)
       patternBank[copyTarget][r][c] = pattern[r][c];
   updatePatNoteIndicators();
   copyBtn.textContent = '→ Copied to ' + 'ABCD'[copyTarget];
@@ -3072,22 +3229,12 @@ const scaleHLToggle = document.getElementById('scaleHLToggle');
 const scaleRootPicker = document.getElementById('scaleRootPicker');
 const scaleTypePicker = document.getElementById('scaleTypePicker');
 
-if (seqMenu && seqMenuBtn) {
-  seqMenuBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const open = seqMenu.classList.toggle('open');
-    if (open) {
-      const rect = seqMenuBtn.getBoundingClientRect();
-      seqMenu.style.left = Math.min(rect.left, window.innerWidth - seqMenu.offsetWidth - 8) + 'px';
-      seqMenu.style.top = (rect.bottom + 6) + 'px';
-      showSeqPanel(seqPanel);
-    }
-  });
+let seqPanel = 'file';
+if (seqMenu) {
   document.addEventListener('click', (e) => {
     if (!seqMenu.contains(e.target) && e.target !== seqMenuBtn) seqMenu.classList.remove('open');
   });
 }
-let seqPanel = 'file';
 function closeSeqSubmenu() {
   const sub = document.getElementById('seqMenuSub');
   const btn = document.getElementById('seqMenuHelpers');
@@ -3128,6 +3275,90 @@ if (scaleHLToggle) {
     autoSave();
   });
 }
+
+// ── View settings (width, section visibility) ─────────────────────
+const VIEW_KEY = 'seq-view-settings';
+const viewBassToggle = document.getElementById('viewBassToggle');
+const viewPercToggle = document.getElementById('viewPercToggle');
+const viewSamplesToggle = document.getElementById('viewSamplesToggle');
+const layoutFullBtn = document.getElementById('layoutFullBtn');
+const layoutCenterBtn = document.getElementById('layoutCenterBtn');
+
+function saveViewSettings() {
+  try {
+    localStorage.setItem(VIEW_KEY, JSON.stringify({ layoutFullWidth, showBass, showPerc, showSamples }));
+  } catch(_) {}
+}
+
+function loadViewSettings() {
+  try {
+    const raw = localStorage.getItem(VIEW_KEY);
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    if (d.layoutFullWidth != null) layoutFullWidth = !!d.layoutFullWidth;
+    if (d.showBass != null) showBass = !!d.showBass;
+    if (d.showPerc != null) showPerc = !!d.showPerc;
+    if (d.showSamples != null) showSamples = !!d.showSamples;
+  } catch(_) {}
+}
+
+function applyViewSettings() {
+  document.body.classList.toggle('layout-full', layoutFullWidth);
+  document.body.classList.toggle('hide-bass', !showBass);
+  document.body.classList.toggle('hide-perc', !showPerc);
+  document.body.classList.toggle('hide-samples', !showSamples);
+}
+
+function updateViewControls() {
+  if (viewBassToggle) viewBassToggle.checked = showBass;
+  if (viewPercToggle) viewPercToggle.checked = showPerc;
+  if (viewSamplesToggle) viewSamplesToggle.checked = showSamples;
+  if (layoutFullBtn) layoutFullBtn.classList.toggle('is-active', layoutFullWidth);
+  if (layoutCenterBtn) layoutCenterBtn.classList.toggle('is-active', !layoutFullWidth);
+}
+
+if (viewBassToggle) {
+  viewBassToggle.addEventListener('change', () => {
+    showBass = viewBassToggle.checked;
+    applyViewSettings();
+    saveViewSettings();
+  });
+}
+if (viewPercToggle) {
+  viewPercToggle.addEventListener('change', () => {
+    showPerc = viewPercToggle.checked;
+    applyViewSettings();
+    saveViewSettings();
+  });
+}
+if (viewSamplesToggle) {
+  viewSamplesToggle.addEventListener('change', () => {
+    showSamples = viewSamplesToggle.checked;
+    applyViewSettings();
+    saveViewSettings();
+  });
+}
+function setLayoutMode(full) {
+  layoutFullWidth = full;
+  applyViewSettings();
+  updateViewControls();
+  saveViewSettings();
+}
+if (layoutFullBtn) {
+  layoutFullBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setLayoutMode(true);
+  });
+}
+if (layoutCenterBtn) {
+  layoutCenterBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setLayoutMode(false);
+  });
+}
+loadViewSettings();
+applyViewSettings();
+updateViewControls();
 NOTE_NAMES.forEach((name, i) => {
   const b = document.createElement('button');
   b.type = 'button';
@@ -3263,6 +3494,7 @@ function saveState() {
   try {
     const data = {
       version: 4,
+      steps: patternSteps,
       patternBank,
       patternTrackVolumes: patternTrackVolumes.map(v => Array.from(v)),
       patternMoods: patternMoods.map(i => MOODS[i].id),
@@ -3296,10 +3528,17 @@ function loadState() {
     if (!data.patternBank) return false;
     migrateLegacyData(data);
 
+    if (PATTERN_STEP_OPTIONS.includes(data.steps) && data.steps !== patternSteps) {
+      patternSteps = data.steps;
+      resizePatternArray(pattern, patternSteps);
+      for (let p = 0; p < MAX_PATTERNS; p++) resizePatternArray(patternBank[p], patternSteps);
+      buildGrid();
+    }
+
     for (let p = 0; p < Math.min(MAX_PATTERNS, data.patternBank.length); p++) {
       const src = data.patternBank[p];
       for (let r = 0; r < Math.min(TRACK_COUNT, src.length); r++)
-        for (let c = 0; c < Math.min(STEPS, src[r].length); c++)
+        for (let c = 0; c < Math.min(patternSteps, src[r].length); c++)
           patternBank[p][r][c] = src[r][c] ? +src[r][c] : 0;
       if (data.patternMoods && data.patternMoods[p]) {
         const mi = MOODS.findIndex(m => m.id === data.patternMoods[p]);
@@ -3494,7 +3733,7 @@ function deleteProject(idx) {
   renderProjectList();
   loadProjectFromStorage(currentProjectIdx);
   for (let r = 0; r < TRACK_COUNT; r++)
-    for (let c = 0; c < STEPS; c++)
+    for (let c = 0; c < patternSteps; c++)
       updateCell(r, c);
   updatePatNoteIndicators();
   updateVolumeBars();
@@ -3514,6 +3753,7 @@ function saveProjectToStorage(idx) {
   }
   const data = {
     patternBank: patternBank.map(p => p.map(r => r.map(c => c))),
+    steps: patternSteps,
     patternTrackVolumes: patternTrackVolumes.map(v => Array.from(v)),
     patternMoods: patternMoods.map(i => MOODS[i].id),
     patternOctaves: [...patternOctaves],
@@ -3556,10 +3796,17 @@ function loadProjectFromStorage(idx) {
     if (!d.patternBank) return false;
     const wasOldLayout = migrateLegacyData(d);
 
+    if (PATTERN_STEP_OPTIONS.includes(d.steps) && d.steps !== patternSteps) {
+      patternSteps = d.steps;
+      resizePatternArray(pattern, patternSteps);
+      for (let p = 0; p < MAX_PATTERNS; p++) resizePatternArray(patternBank[p], patternSteps);
+      buildGrid();
+    }
+
     for (let p = 0; p < Math.min(MAX_PATTERNS, d.patternBank.length); p++) {
       const src = d.patternBank[p];
       for (let r = 0; r < Math.min(TRACK_COUNT, src.length); r++)
-        for (let c = 0; c < Math.min(STEPS, src[r].length); c++)
+        for (let c = 0; c < Math.min(patternSteps, src[r].length); c++)
           patternBank[p][r][c] = src[r][c] ? +src[r][c] : 0;
       if (d.patternMoods && d.patternMoods[p]) {
         const mi = MOODS.findIndex(m => m.id === d.patternMoods[p]);
@@ -3642,7 +3889,7 @@ function switchToProject(idx) {
   currentProjectIdx = idx;
   loadProjectFromStorage(idx);
   for (let r = 0; r < TRACK_COUNT; r++)
-    for (let c = 0; c < STEPS; c++)
+    for (let c = 0; c < patternSteps; c++)
       updateCell(r, c);
   updatePatNoteIndicators();
   updateVolumeBars();
@@ -3658,13 +3905,13 @@ function newProject() {
   saveProjectToStorage(currentProjectIdx);
   for (let p = 0; p < MAX_PATTERNS; p++)
     for (let r = 0; r < TRACK_COUNT; r++)
-      for (let c = 0; c < STEPS; c++)
+      for (let c = 0; c < patternSteps; c++)
         patternBank[p][r][c] = 0;
   for (let r = 0; r < TRACK_COUNT; r++)
-    for (let c = 0; c < STEPS; c++)
+    for (let c = 0; c < patternSteps; c++)
       pattern[r][c] = 0;
   for (let r = 0; r < TRACK_COUNT; r++)
-    for (let c = 0; c < STEPS; c++)
+    for (let c = 0; c < patternSteps; c++)
       updateCell(r, c);
   moodSelect.value = 0;
   patternMoods[currentPatternIdx] = 0;
@@ -3722,7 +3969,7 @@ document.addEventListener('DOMContentLoaded', () => {
       initDemoPatterns();
     }
     for (let r = 0; r < TRACK_COUNT; r++)
-      for (let c = 0; c < STEPS; c++)
+      for (let c = 0; c < patternSteps; c++)
         updateCell(r, c);
     // Rebuild timeline grid if there are recorded events
     if (recordedEvents && recordedEvents.length) {
@@ -3774,14 +4021,14 @@ volSlider.addEventListener('input', autoSave);
 function initDemoPatterns() {
   for (let p = 0; p < MAX_PATTERNS; p++) {
     for (let r = 0; r < TRACK_COUNT; r++)
-      for (let c = 0; c < STEPS; c++)
+      for (let c = 0; c < patternSteps; c++)
         patternBank[p][r][c] = 0;
     patternMoods[p] = 0;
     patternOctaves[p] = 0;
   }
 
   const R = (arr) => arr;
-  const empty = () => Array.from({length:TRACK_COUNT}, () => Array(STEPS).fill(0));
+  const empty = () => Array.from({length:TRACK_COUNT}, () => Array(patternSteps).fill(0));
 
   const patterns = [];
 
@@ -3965,12 +4212,12 @@ function initDemoPatterns() {
   for (let pIdx = 0; pIdx < MAX_PATTERNS; pIdx++) {
     const src = patterns[pIdx];
     for (let r = 0; r < TRACK_COUNT; r++)
-      for (let c = 0; c < STEPS; c++)
+      for (let c = 0; c < patternSteps; c++)
         patternBank[pIdx][r][c] = src[r][c] ? +src[r][c] : 0;
   }
 
   for (let r = 0; r < TRACK_COUNT; r++)
-    for (let c = 0; c < STEPS; c++) {
+    for (let c = 0; c < patternSteps; c++) {
       pattern[r][c] = patternBank[0][r][c];
       updateCell(r, c);
     }

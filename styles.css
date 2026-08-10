@@ -124,6 +124,16 @@ body.mood-nebula::before {
   z-index: 1;
 }
 
+/* View panel settings */
+body.layout-full .app-layout { max-width: none; }
+body.hide-samples #samplesSection { display: none; }
+body.hide-bass .grid-wrap .section-divider[data-section="bass"],
+body.hide-bass .grid-wrap .track-label[data-section="bass"],
+body.hide-bass .grid-wrap .cell[data-section="bass"],
+body.hide-perc .grid-wrap .section-divider[data-section="percussion"],
+body.hide-perc .grid-wrap .track-label[data-section="percussion"],
+body.hide-perc .grid-wrap .cell[data-section="percussion"] { display: none; }
+
 .sidebar {
   width: 220px;
   flex-shrink: 0;
@@ -427,7 +437,14 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--text-muted);
   border-bottom: 1px solid var(--glass-border);
   background: rgba(255,255,255,0.03);
+  height: 25px;
 }
+.section-divider.div-left {
+  flex: 0 0 auto;
+  border-right: 1px solid var(--glass-border);
+  white-space: nowrap;
+}
+.section-divider.div-body { grid-column: 1 / -1; }
 .section-divider .badge {
   font-size: 8px;
   padding: 1px 7px;
@@ -633,29 +650,49 @@ input[type="range"]::-webkit-slider-thumb {
 .odub-btn.is-overdubbing .dot { box-shadow: 0 0 8px #ff4d4d; }
 
 .grid-wrap {
-  overflow-x: auto;
+  display: flex;
+  overflow: hidden;
   margin-bottom: 14px;
   border-radius: var(--radius);
   border: 1px solid var(--glass-border);
   background: rgba(0,0,0,0.2);
 }
 
+/* Fixed first column (track labels) + horizontally scrollable cells body */
+.grid-labels {
+  flex: 0 0 var(--label-w, 170px);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--glass-border);
+  background: rgba(0,0,0,0.15);
+  position: relative;
+  z-index: 2;
+}
+
+.grid-body {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
 .grid {
   display: grid;
-  grid-template-columns: 170px repeat(16, 1fr);
+  grid-template-columns: repeat(var(--grid-steps, 16), minmax(var(--cell-w, 34px), 1fr));
   gap: 0;
-  min-width: 520px;
+  min-width: calc(var(--grid-steps, 16) * var(--cell-w, 34px));
 }
 
 /* Melody rows live in a scrollable piano-roll block that mirrors the grid columns */
 .melody-scroll {
   display: grid;
-  grid-template-columns: 170px repeat(16, 1fr);
+  grid-template-columns: repeat(var(--grid-steps, 16), minmax(var(--cell-w, 34px), 1fr));
   gap: 0;
-  min-width: 520px;
+  min-width: calc(var(--grid-steps, 16) * var(--cell-w, 34px));
   max-height: 396px;
   overflow-y: scroll;
-  overflow-x: auto;
+  overflow-x: hidden;
   scroll-behavior: auto;
   scrollbar-width: none;
 }
@@ -665,9 +702,26 @@ input[type="range"]::-webkit-slider-thumb {
   height: 0;
 }
 
+/* Left-pane counterpart of .melody-scroll — track labels stay in lock-step with the cells */
+.melody-labels {
+  display: flex;
+  flex-direction: column;
+  max-height: 396px;
+  overflow-y: scroll;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+.melody-labels .track-label { flex-shrink: 0; }
+
+.melody-labels::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 .grid-header { display: contents; }
 
-.grid-header .step-num {
+.step-num {
   padding: 5px 0;
   text-align: center;
   font-size: 9px;
@@ -677,7 +731,13 @@ input[type="range"]::-webkit-slider-thumb {
   background: rgba(255,255,255,0.03);
   border-bottom: 1px solid var(--glass-border);
 }
-.grid-header .step-num:first-child { background: transparent; border-bottom-color: transparent; }
+.grid-header .step-num { line-height: 1; height: 20px; }
+.grid-labels .step-num.corner {
+  background: transparent;
+  border-bottom: 1px solid var(--glass-border);
+  line-height: 1;
+  height: 20px;
+}
 
 .seq-menu-btn {
   width: 100%;
@@ -816,7 +876,7 @@ input[type="range"]::-webkit-slider-thumb {
   color: rgba(255,255,255,0.45);
   pointer-events: none;
 }
-.cell:nth-child(4n+2) { border-left-color: rgba(255,255,255,0.1); }
+.cell.beat { border-left-color: rgba(255,255,255,0.1); }
 .cell.drag-preview {
   background: var(--cell-color, var(--accent));
   opacity: 0.7;
@@ -1484,8 +1544,7 @@ input[type="range"]::-webkit-slider-thumb {
 @media (max-width: 640px) {
   body { padding: 12px; }
   .container { padding: 16px; border-radius: 14px; }
-  .grid { min-width: 380px; grid-template-columns: 80px repeat(16, 1fr); }
-  .melody-scroll { min-width: 380px; grid-template-columns: 80px repeat(16, 1fr); max-height: 340px; }
+  .grid-wrap { --label-w: 80px; --cell-w: 28px; }
   .track-label { font-size: 10px; padding: 0 3px 0 6px; height: 28px; }
   .cell { height: 28px; }
   .track-label.key-white, .cell.key-white { height: 30px; }
