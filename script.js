@@ -2761,9 +2761,10 @@ function importPattern(file) {
       if (PATTERN_STEP_OPTIONS.includes(data.steps) && data.steps !== patternSteps) {
         setPatternSteps(data.steps);
       }
-      if (data.version >= 2 && data.patterns) {
-        for (let p = 0; p < Math.min(MAX_PATTERNS, data.patterns.length); p++) {
-          const src = data.patterns[p];
+      const bank = data.patternBank || data.patterns;
+      if (data.version >= 2 && bank) {
+        for (let p = 0; p < Math.min(MAX_PATTERNS, bank.length); p++) {
+          const src = bank[p];
           for (let r = 0; r < Math.min(TRACK_COUNT, src.length); r++)
             for (let c = 0; c < Math.min(patternSteps, src[r].length); c++)
               patternBank[p][r][c] = src[r][c] ? +src[r][c] : 0;
@@ -2785,8 +2786,8 @@ function importPattern(file) {
               patternTrackVolumes[p][r] = vsrc[r];
           }
         }
-        if (data.currentPattern != null) loadPattern(data.currentPattern);
-        else loadPattern(0);
+        if (data.currentPattern != null) loadPattern(data.currentPattern, true);
+        else loadPattern(0, true);
         if (data.muted) {
           for (let r = 0; r < Math.min(TRACK_COUNT, data.muted.length); r++) {
             muted[r] = !!data.muted[r];
@@ -3955,19 +3956,19 @@ document.addEventListener('DOMContentLoaded', () => {
   const hasProjectData = (function() {
     try {
       const projectsRaw = localStorage.getItem(PROJECTS_KEY);
-      const hasProjectList = projectsRaw && JSON.parse(projectsRaw).length > 0;
-      const hasProject0 = !!localStorage.getItem('seq-project-0');
-      return hasProjectList || hasProject0;
+      let hasProjectList = false;
+      if (projectsRaw) {
+        const parsed = JSON.parse(projectsRaw);
+        hasProjectList = (Array.isArray(parsed) && parsed.length > 0) ||
+                         (parsed && Array.isArray(parsed.projects) && parsed.projects.length > 0);
+      }
+      return hasProjectList || !!localStorage.getItem('seq-project-0');
     } catch(_) { return false; }
   })();
   
   if (hasProjectData) {
-    // Reload from project 0 (overwrites whatever loadState() loaded from old key)
-    const loaded = loadProjectFromStorage(0);
-    // If load failed or loaded incomplete patterns, ensure all 16 patterns exist
-    if (!loaded || patternBank.some(p => p.every(r => r.every(c => !c)))) {
-      initDemoPatterns();
-    }
+    // Reload the last-active project; fresh projects stay clean (no demo seeding)
+    loadProjectFromStorage(currentProjectIdx);
     for (let r = 0; r < TRACK_COUNT; r++)
       for (let c = 0; c < patternSteps; c++)
         updateCell(r, c);
